@@ -197,19 +197,19 @@ These two concepts are important in interop &ndash; especially when involving th
 
 [Unmanaged types][doc_unmanaged_types] are defined in the C# specification and are not related to blittability at all.
 
-Consider the following .NET types: `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `float`, `double`. Every one of these types has the same well defined size and representation in both a managed and native environment - so they are blittable. All of them are also defined as C# unmanaged types.
+Consider the following .NET types: `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `float`, `double`. Every one of these types has a representation that is the same in both a managed and native environment - so they are blittable. All of them are also defined as C# unmanaged types.
 
-There are however unmanaged types that are not blittable. The .NET types `bool`, `char`, and enumerations are not considered blittable but are unmanaged types. The reason for this is partially historical and partially based on ECMA-335. The `bool` is specified as a single byte in .NET but historically is marshalled as an `int` to align with the Windows' `BOOL` type. The `char` is specified to be a two byte 16-bit value, but the native mapping for a character in C/C++ could be either [`char`](https://en.cppreference.com/w/cpp/keyword/char) or [`wchar_t`](https://en.cppreference.com/w/cpp/keyword/wchar_t), which are 1 byte and 2 bytes respectively on the Windows platform. The `wchar_t` is particularly difficult given it is 4-bytes on some non-Windows platforms. Finally, the ECMA-335 specification in II.14.3 defines the underlying type of an enumeration may be any numeric type or a `bool` or `char`. This means that an enumeration can't always be considered blittable.
+There are however unmanaged types that are not blittable. The .NET types `bool`, `char`, and enumerations are unmanaged types, but are not considered blittable. The reason for this is partially historical and partially based on ECMA-335. The `bool` is specified as a single byte in .NET, but historically is marshalled as an `int` to align with the Windows' `BOOL` type. The `char` is specified to be a two-byte 16-bit value, but the native mapping for a character in C/C++ could be either [`char`](https://en.cppreference.com/w/cpp/keyword/char) or [`wchar_t`](https://en.cppreference.com/w/cpp/keyword/wchar_t), which are 1 byte and 2 bytes respectively on the Windows platform. The `wchar_t` is particularly difficult given it is 4-bytes on some non-Windows platforms. Finally, the ECMA-335 specification in II.14.3 defines the underlying type of an enumeration may be any numeric type or a `bool` or `char`. This means that an enumeration can't always be considered blittable.
 
-The opposite case is also possible &ndash; blittable but not unmanaged. Single dimension arrays of blittables types are considered blittable by the interop system but are not unmanaged types. Considering single dimension arrays of blittable types as blittable is an example of a runtime implementation optimization.
+The opposite case is also possible &ndash; blittable but not unmanaged. Single dimension arrays of blittable primitive types are considered blittable by the interop system but are not unmanaged types. Considering single dimension arrays of blittable primitive types as blittable is an example of a runtime implementation optimization.
 
 ## C++/CLI <a name="cppcli"></a>
 
-Support for writing C++ to run in a .NET runtime is accomplished using a language called C++/CLI and specified in [ECMA-372][spec_ecma372]. At present, the [C++/CLI language][doc_cppcli] is only supported by the VC++ compiler and limited exclusively to the Windows platform. One of the goals of C++/CLI was to make interoperability between native and managed code seamless and sort of magic, that is why it is commonly referred to as IJW or "It-Just-Works". C++/CLI's goal of making interop simpler is laudable but given its design comes with non-trivial costs in terms of implementation and a deeper understanding of interop as opposed performing it from within a language like C#.
-
-There are 4 modes of operation for a C++/CLI compiled assembly. The documentation for these modes is relatively vague so additional details are added here. The VC++ compiler will compile a C++/CLI assembly when passed the [`/clr`](https://docs.microsoft.com/cpp/build/reference/clr-common-language-runtime-compilation) flag.
+Support for writing C++ to run in a .NET runtime is accomplished using a language called C++/CLI as specified in [ECMA-372][spec_ecma372]. At present, the [C++/CLI language][doc_cppcli] is only supported by the VC++ compiler and limited exclusively to the Windows platform. One of the goals of C++/CLI was to make interoperability between native and managed code seamless and sort of magic &ndash; that is why it is commonly referred to as IJW or "It-Just-Works". C++/CLI's goal of making interop simpler is laudable, but given its design, it comes with non-trivial costs in terms of implementation and requires a deeper understanding of interop as opposed performing it from within a language like C#.
 
 Comprehensive official documentation for C++/CLI can be found [here][doc_cppcli].
+
+There are 4 modes of operation for a C++/CLI compiled assembly. The documentation for these modes is relatively vague so additional details are added here. The VC++ compiler will compile a C++/CLI assembly when passed the [`/clr`](https://docs.microsoft.com/cpp/build/reference/clr-common-language-runtime-compilation) flag.
 
 |Mode|Operation|
 |-|-|
@@ -218,11 +218,11 @@ Comprehensive official documentation for C++/CLI can be found [here][doc_cppcli]
 |`safe`| **Deprecated**. The resulting assembly may contain both native and managed code, but no native memory dereferences are permitted in the native code. The intent of this build is to produce verifiable code (that is, no `unsafe` code). The assembly is linked against `mscoree.lib` and only runs on .NET Framework.|
 |`NetCore`| This mode is identical to the default but links against `ijwhost.lib` and only runs on .NET Core 3.1 or .NET 5+. |
 
-If either of the two deprecated modes are desired it is strongly recommended to write in or port code to a pure .NET language (for example, C#).
+If either of the two deprecated modes are desired, it is strongly recommended to write in or port code to a pure .NET language (for example, C#).
 
 ### C++ language extensions <a name="cppcli_cpplangext"></a>
 
-The C++/CLI language is an  extension of C++ that attempts to express .NET interop [Concepts](#concepts) in C++. The most important being memory ownership and levels of indirection.
+The C++/CLI language is an  extension of C++ that attempts to express .NET interop [Concepts](#concepts) in C++ &ndash; the most important being memory ownership and levels of indirection.
 
 **`&`** &ndash; A native reference to native memory. This is the [C++ construct](https://en.cppreference.com/w/cpp/language/reference) and has the same semantics. This should not be confused with the `&` defined above when talking about managed references in IL &ndash; a completely different language.
 
@@ -230,23 +230,23 @@ The C++/CLI language is an  extension of C++ that attempts to express .NET inter
 
 **`%`** &ndash; A managed reference, also called a ["tracking reference"](https://docs.microsoft.com/cpp/dotnet/how-to-use-tracking-references-in-cpp-cli), to managed memory. This is a new construct and provides symmetry with the native `&` construct but for managed.
 
-**`^`** &ndash; A managed pointer to managed memory. This is a new construct and provides symmetry with the native `*` construct but for managed.
+**`^`** &ndash; A managed pointer to managed memory. This is a new construct and provides symmetry with the native `*` construct but for managed. The managed pointer is also used for all managed type instances that derive from [`System.Object`][api_object] (that is, [reference types][wiki_valuereftypes]). For example, `Object^ o = gcnew Object;`.
 
-Examples of this constructs in C++/CLI can be found in the [official documentation][doc_cppcli].
+Examples of these constructs in C++/CLI can be found in the [official documentation][doc_cppcli].
 
-Regardless of how these constructs are used in practice their function should be clear &ndash; coordination with the [GC](#gc) to help share memory between native and managed environments.
+Regardless of how these constructs are used in practice, their function should be clear &ndash; coordination with the [GC](#gc) to help share memory between native and managed environments.
 
 ### Activation of the .NET runtime <a name="cppcli_activation"></a>
 
-Introducing .NET into an existing native application is a common scenario where C++/CLI is employed. Imagine a large native application that would like to leverage an existing .NET library. Since the applicaion is native this would imply that a .NET runtime instance is not already running in the process and the main entry point was native (for example, [`int main()`](https://en.cppreference.com/w/cpp/language/main_function)). When a C++/CLI assembly is loaded into the process, the .NET runtime must be initialized and prepared to operate in this process prior to any managed code running.
+Introducing .NET into an existing native application is a common scenario where C++/CLI is employed. Imagine a large native application that would like to leverage an existing .NET library. Since the applicaion is native, this would imply that a .NET runtime instance is not already running in the process and the main entry point is native (for example, [`int main()`](https://en.cppreference.com/w/cpp/language/main_function)). When a C++/CLI assembly is loaded into the process, the .NET runtime must be initialized and prepared to operate in this process prior to any managed code running.
 
 There are are two types of .NET runtime activation for C++/CLI &ndash; .NET Framework and .NET Core 3.1/.NET 5+. These two types are mechanically similar once the .NET runtime is loaded and initialized but prior to that the details are very different.
 
-**.NET Framework** &ndash; The C++/CLI assembly is implicitly linked against `mscoree.lib`. The linking indicates the assembly has a dependency on the native `mscoree.dll` binary and must be loaded prior to the assembly being executed. The `mscoree.dll` binary is located globally (for example, `%SystemRoot%\System32\mscoree.dll`) on the Windows platform and facilitates loading the .NET runtime. Which version of the runtime (that is, `2.0`, `3.5`, or `4.5`+) that is loaded is influenced by additional flags passed during the compilation, a `app.config`, or global settings.
+**.NET Framework** &ndash; The C++/CLI assembly is implicitly linked against `mscoree.lib`. The linking indicates the assembly has a dependency on the native `mscoree.dll` binary and must be loaded prior to the assembly being executed. The `mscoree.dll` binary is located globally (for example, `%SystemRoot%\System32\mscoree.dll`) on the Windows platform and facilitates loading the .NET runtime. The version of the runtime (that is, `2.0`, `3.5`, or `4.5`+) that is loaded is influenced by additional flags passed during the compilation, an `app.config`, or global settings.
 
-**.NET Core 3.1** and **.NET 5+** &ndash; The C++/CLI assembly is implicitly linked against `ijwhost.lib` and thus requires `ijwhost.dll` during load. The `ijwhost.dll` binary is not necessarily globally installed and available. This makes it a dependency that must be provided in another manner (for example, update `PATH` environment variable). Once the `ijwhost.dll` is loaded, it reads an associated `<CPPCLI_ASSEMBLY_NAME>.runtimeconfig.json` file to determine which .NET runtime is needed by the assembly. If an existing .NET runtime is already loaded that version is validated it supports the needs of the requested version. Version reconciliation is non-trivial and has many options that are described in detail [here](https://github.com/dotnet/runtime/blob/main/docs/design/features/framework-version-resolution.md).
+**.NET Core 3.1** and **.NET 5+** &ndash; The C++/CLI assembly is implicitly linked against `ijwhost.lib` and thus requires `ijwhost.dll` during load. The `ijwhost.dll` binary is not necessarily globally installed and available. This makes it a dependency that must be provided in another manner (for example, update `PATH` environment variable). Once the `ijwhost.dll` is loaded, it reads an associated `<CPPCLI_ASSEMBLY_NAME>.runtimeconfig.json` file to determine which .NET runtime is needed by the assembly. If an existing .NET runtime is already loaded, that runtime version is validated it supports the needs of the requested version and the `Microsoft.WindowsDesktop.App` framework is loaded. Version reconciliation is non-trivial and has many options that are described in detail [here](https://github.com/dotnet/runtime/blob/main/docs/design/features/framework-version-resolution.md). The design document for this process can be found in the [`dotnet/runtime`][design_ijw_activation] repository.
 
-Once the specific native dependency (that is, `mscoree.dll`/`ijwhost.dll`) is loaded, all managed exports exposed to native code are "thunked". This thunk provides a level of indirection between the actual managed function and the calling native code in order to load the .NET runtime on demand. The first time a managed function is called by native code the thunk is executed and a .NET runtime loaded or the existing one confirmed compatible and adopted. All native exports are then populated with the appropriate managed function. Only one managed call must pay this initialization price since all thunks for an assembly will be updated when it is loaded into a .NET runtime. After a .NET runtime has loaded the assembly and the managed function thunks updated, the interop experience follows all the rules and principles described in the [Concepts](#concepts) section.
+Once the specific native dependency (that is, `mscoree.dll`/`ijwhost.dll`) is loaded, all managed exports exposed to native code are "thunked". This thunk provides a level of indirection between the actual managed function and the calling native code in order to load the .NET runtime on demand. The first time a managed function is called by native code, the thunk is executed and a .NET runtime loaded or the existing one confirmed to be compatible and adopted. All native exports are then populated with the appropriate managed function. Only one managed call must pay this initialization price since all thunks for an assembly will be updated when it is loaded into a .NET runtime. After a .NET runtime has loaded the assembly and the managed function thunks have been updated, the interop experience follows all the rules and principles described in the [Concepts](#concepts) section.
 
 
 <!--
@@ -284,6 +284,9 @@ Multiple tools exist for building interop solutions in .NET interop. Below is a 
 [api_dllimport]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.dllimportattribute
 [api_gchandle]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.gchandle
 [api_iunknown]:https://docs.microsoft.com/windows/win32/api/unknwn/nn-unknwn-iunknown
+[api_object]:https://docs.microsoft.com/dotnet/api/system.object
+
+[design_ijw_activation]:https://github.com/dotnet/runtime/blob/main/docs/design/features/IJW-activation.md
 
 [doc_blittable]:https://docs.microsoft.com/dotnet/framework/interop/blittable-and-non-blittable-types
 [doc_botr]:https://github.com/dotnet/runtime/blob/main/docs/design/coreclr/botr/README.md
@@ -300,4 +303,5 @@ Multiple tools exist for building interop solutions in .NET interop. Below is a 
 [repo_dnne]:https://github.com/AaronRobinsonMSFT/DNNE
 [repo_mem_doc]:https://github.com/Maoni0/mem-doc
 
-[wiki_x86callconv]:https://en.wikipedia.org/wiki/X86_calling_conventions
+[wiki_x86callconv]:https://wikipedia.org/wiki/X86_calling_conventions
+[wiki_valuereftypes]:https://wikipedia.org/wiki/Value_type_and_reference_type
