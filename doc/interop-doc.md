@@ -222,7 +222,7 @@ If either of the two deprecated modes are desired, it is strongly recommended to
 
 ### C++ language extensions <a name="cppcli_cpplangext"></a>
 
-The C++/CLI language is an  extension of C++ that attempts to express .NET interop [Concepts](#concepts) in C++ &ndash; the most important being memory ownership and levels of indirection.
+The C++/CLI language is an extension of C++ that attempts to express .NET interop [Concepts](#concepts) in C++ &ndash; the most important being memory ownership and levels of indirection.
 
 **`&`** &ndash; A native reference to native memory. This is the [C++ construct](https://en.cppreference.com/w/cpp/language/reference) and has the same semantics. This should not be confused with the `&` defined above when talking about managed references in IL &ndash; a completely different language.
 
