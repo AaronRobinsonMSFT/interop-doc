@@ -222,7 +222,7 @@ https://docs.microsoft.com/dotnet/csharp/language-reference/keywords/in-paramete
 - The [`MarshalAsAttribute`][api_marshalasattr] deserves special mention as it can heavily influence how any argument or return value is marshalled.
 - Ensure the unmanaged/managed boundary is seamless as it relates to memory leaks or corruption. For example, if passing a [`SafeHandle`][api_safehandle] derived type to a native function, a leak of that handle shouldn't be possible.
 
-An IL Stub or Reverse IL Stub will be generated in several circumstances. The following C# examples represent some of these circumstances.
+An IL Stub or Reverse IL Stub will be generated in several circumstances. The following examples represent symmetrical operations for a function that takes a sequence of characters (that is, a string) and returns a new string that has been converted into lowercase letters. The logic of that operation is defined within the function itself but in order to correctly pass the arguments and return the value to the other environment, a stub is used.
 
 **IL Stub**
 
@@ -275,8 +275,6 @@ CallFptr(fptr);
 //      const wchar_t* lowered = ((to_lower_t)fptr)(L"ABCDEFG");
 //  }
 ```
-
-The above examples represent symmetrical operations for a function that takes a sequence of characters (that is, a string) and returns a new string that has been converted into lowercase letters. The logic of that operation is defined within the function itself but in order to correctly pass the arguments and return the value to the other environment, a stub is used.
 
 ## C++/CLI <a name="cppcli"></a>
 
