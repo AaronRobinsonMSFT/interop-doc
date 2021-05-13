@@ -11,13 +11,13 @@
     - [Garbage Collection](#gc) &ndash; Pinning and `GCHandle`s.
     - [Referencing Memory](#referencingmemory).
     - [Blittable vs Unmanaged types](#blittablevsunmanaged).
+    - [IL Stubs and Reverse IL Stubs](#ilstubs) &ndash; Generation of IL Stubs for marshalling support.
 - [C++/CLI](#cppcli) &ndash; Merging .NET and C++ into a single language.
     - [C++ language extensions](#cppcli_cpplangext).
     - [Activation of the .NET runtime](#cppcli_activation).
 
 <!-- 
-- [IL Stubs and Reverse IL Stubs](#ilstubs) &ndash; How stubs are generated and runtime optimizations.
-    - [Diagnostics] &ndash; How to see the generated IL Stub.
+- [Diagnostics] &ndash; How to see the generated IL Stub.
 - [COM and `IUnknown`](#comiunknown) &ndash; COM interoperability in .NET.
     - [WinRT](#winrt)
 - [Migration from .NET Framework](#migration) &ndash; Options when migrating from .NET Framework.
@@ -66,7 +66,7 @@ Understanding the .NET interop domain is difficult without defining common jargo
 
 ### Transitioning between Managed and Native <a name="transition"></a>
 
-Declaring the previous C function to be callable in C# is accomplished via [`DllImportAttribute`][api_dllimport] &ndash; also called a [P/Invoke][doc_pinvoke]. Assuming the C function is contained within a C library named `NativeLib.dll`, the following C# would declare the native function. Other mechanisms for defining callable native functions in IL are discussed in subsequent sections.
+Declaring the previous C function to be callable in C# is accomplished via [`DllImportAttribute`][api_dllimportattr] &ndash; also called a [P/Invoke][doc_pinvoke]. Assuming the C function is contained within a C library named `NativeLib.dll`, the following C# would declare the native function. Other mechanisms for defining callable native functions in IL are discussed in subsequent sections.
 
 ```csharp
 [DllImport("NativeLib.dll")]
@@ -143,7 +143,7 @@ What should be known about the GC is that memory allocated by the GC (that is, m
 
 One coordination mechanism was demonstrated in the [Introduction](#intro). Recall that the `int[]` passed to the P/Invoke was "pinned" prior to passing the `int*` to native code. Pinning let the GC know the `int[]` shouldn't be moved from its current location in memory. It was still referenced in the method calling the native function so issue (1) above wasn't a concern. The example in the Introduction was in IL, but pinning can be accomplished in C# using the [`fixed`](https://docs.microsoft.com/dotnet/csharp/language-reference/keywords/fixed-statement) statement. 
 
-Another mechanism is to use a [`GCHandle`][api_gchandle]. This provides a level of indirection to managed memory which means the `GCHandle` can be passed around instead of the managed memory itself. The `GCHandle` helps with (1) since it extends the managed memory's lifetime. The `GCHandle` API is powerful and has additional options that also enable it to handle (2) &ndash; see [`GCHandleType.Pinned`](https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.gchandletype) &ndash; and even permit some insight into if the managed memory was collected &ndash; see [`GCHandleType.WeakTrackResurrection`](https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.gchandletype).
+Another mechanism is to use a [`GCHandle`][api_gchandle]. This provides a level of indirection to managed memory which means the `GCHandle` can be passed around instead of the managed memory itself. The `GCHandle` helps with (1) since it extends the managed memory's lifetime. The `GCHandle` API is powerful and has additional options that also enable it to handle (2) &ndash; see [`GCHandleType.Pinned`][api_gchandletype] &ndash; and even permit some insight into if the managed memory was collected &ndash; see [`GCHandleType.WeakTrackResurrection`][api_gchandletype].
 
 These two mechanisms are incredibly powerful and provide the needed coordination with the GC to make .NET interoperability with native code possible.
 
@@ -199,9 +199,82 @@ These two concepts are important in interop &ndash; especially when involving th
 
 Consider the following .NET types: `sbyte`, `byte`, `short`, `ushort`, `int`, `uint`, `long`, `ulong`, `float`, `double`. Every one of these types has a representation that is the same in both a managed and native environment - so they are blittable. All of them are also defined as C# unmanaged types.
 
-There are however unmanaged types that are not blittable. The .NET types `bool`, `char`, and enumerations are unmanaged types, but are not considered blittable. The reason for this is partially historical and partially based on ECMA-335. The `bool` is specified as a single byte in .NET, but historically is marshalled as an `int` to align with the Windows' [`BOOL`][doc_windatatypes] type. The `char` is specified to be a two-byte 16-bit value, but the native mapping for a character in C/C++ could be either [`char`](https://en.cppreference.com/w/cpp/keyword/char) or [`wchar_t`](https://en.cppreference.com/w/cpp/keyword/wchar_t), which are 1 byte and 2 bytes respectively on the Windows platform. The `wchar_t` is particularly difficult given it is 4-bytes on some non-Windows platforms. Finally, the ECMA-335 specification in II.14.3 defines the underlying type of an enumeration may be any numeric type or a `bool` or `char`. This means that an enumeration can't always be considered blittable.
+There are however unmanaged types that are not blittable. The .NET types `bool`, `char`, and enumerations are unmanaged types, but are not considered blittable. The reason for this is partially historical and partially based on ECMA-335. The `bool` is specified as a single byte in .NET, but historically is marshalled as an `int` to align with the Windows' [`BOOL`][doc_windatatypes] type. The `char` is specified to be a two-byte 16-bit value, but the native mapping for a character in C/C++ could be either [`char`][cppdoc_char] or [`wchar_t`][cppdoc_wchar_t], which are 1 byte and 2 bytes respectively on the Windows platform. The `wchar_t` is particularly difficult given it is 4-bytes on some non-Windows platforms. Finally, the ECMA-335 specification in II.14.3 defines the underlying type of an enumeration may be any numeric type or a `bool` or `char`. This means that an enumeration can't always be considered blittable.
 
 The opposite case is also possible &ndash; blittable but not unmanaged. Single dimension arrays of blittable primitive types are considered blittable by the interop system but are not unmanaged types. Considering single dimension arrays of blittable primitive types as blittable is an example of a runtime implementation optimization.
+
+### IL Stubs and Reverse IL Stubs <a name="ilstubs"></a>
+
+The transition between a managed and native environment during functions calls may require help for various reasons. The most obvious cases involve marshalling types that aren't blittable as was [previously illustrated](#transition), but other cases occur when the semantics of the call are altered to improve the interop experience. For example, consider the [`PreserveSig`](https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.dllimportattribute.preservesig) field on [`DllImportAttribute`][api_dllimportattr]. This field indicates if APIs that return a Windows' [`HRESULT`][wiki_hresult] error code should convert that error code into a .NET [`Exception`][api_exception] or retain the original function signature and return an `int`. This translation is handled in an ad-hoc basis based on the function declaration and is performed by the runtime generated IL Stub.
+
+Before discussing what these stubs do, let's define what they don't do.
+- The stubs themselves do not perform any GC mode transitions (that is, [switch from Preemptive to Cooperative mode][doc_botr]). That transition logic is performed around the stubs but added by the JIT during JIT compilation.
+- The stubs are not responsible for handling native calling conventions. Prior to .NET 6, the generated IL Stubs were involved in calling conventions under certain circumstances when calling a COM or C++ member function on Windows. A consequence of having the IL Stubs handle aspects of calling conventions meant that anyone wanting to auto-generate interop code had to handle these same aspects.
+- As of .NET 5, IL Stubs don't do anything that can't be done in C#. Prior to C# function pointers, the IL Stubs used IL instructions that were not representable in C# and therefore were difficult to be source-generated.
+
+Let's enumerate what IL Stubs do and what influences them.
+
+- Respond to the fields on the [`DllImportAttribute`][api_dllimportattr]. Each of the available fields influences either the logic in the IL Stub or the intended native target.
+- Respond to interop-related attributes that control transitioning or marshalling behavior. For example, see [`PreserveSigAttribute`][api_preservesigattr] and [`UnmanagedFunctionPointerAttribute`][api_unmanagedfunctionpointerattr], and [`MarshalAsAttribute`][api_marshalasattr].
+- Marshal each argument into the appropriate form for the target. For example, if a .NET `string` is being passed to a native function, then the stub will convert it to a `wchar_t const *` by default on Windows. Conversely, if a `wchar_t const *` is passed to a Reverse IL Stub from native then that stub is responsible for converting it to a .NET `string`.
+- Marshal out all non-[`in`](
+https://docs.microsoft.com/dotnet/csharp/language-reference/keywords/in-parameter-modifier) by-ref arguments and the return type to the caller. The [`OutAttribute`][api_outattr] is a special case that indicates out semantics should be followed and can be applied to an argument that is passed by-value instead of by-ref.
+- The [`MarshalAsAttribute`][api_marshalasattr] deserves special mention as it can heavily influence how any argument or return value is marshalled.
+- Ensure the unmanaged/managed boundary is seamless as it relates to memory leaks or corruption. For example, if passing a [`SafeHandle`][api_safehandle] derived type to a native function, a leak of that handle shouldn't be possible.
+
+An IL Stub or Reverse IL Stub will be generated in several circumstances. The following examples represent symmetrical operations for a function that takes a sequence of characters (that is, a string) and returns a new string that has been converted into lowercase letters. The logic of that operation is defined within the function itself but in order to correctly pass the arguments and return the value to the other environment, a stub is used.
+
+**IL Stub**
+
+The generated stub will marshal the .NET `string` `"ABCDEFG"` to the native function `to_lower()`.
+
+```csharp
+[DllImport("NativeLib.dll", EntryPoint = "to_lower")]
+static extern string ToLower(string str);
+
+string lowered = ToLower("ABCDEFG");
+```
+
+Another way to call the native `to_lower()` function is using a `Delegate` type &ndash; which will also require an IL Stub.
+
+```csharp
+[UnmanagedFunctionPointer(CallingConvention.Winapi)]
+delegate string ToLowerDelegate(string str);
+
+IntPtr mod = NativeLibrary.Load("NativeLib.dll");
+IntPtr fptr = NativeLibrary.GetExport(mod, "to_lower");
+
+string toLower = Marshal.GetDelegateForFunctionPointer<ToLowerDelegate>(fptr);
+string lowered = toLower("ABCDEFG");
+```
+
+The generated stub in the above examples would convert the supplied .NET `string` to the appropriate native representation. This conversion carries some implications that are worth considering. The .NET platform internally stores `string` values as UTF-16 encoded values. This means that if the native environment were expecting a UTF-8 or ANSI code page encoding, that would need to be handled by some logic &ndash; the IL Stub in this case. The `to_lower()` function also returns a string, which means the reverse operation (converting the native representation to a .NET `string`, including encoding considerations), must be taken into account. An additional consideration is that the GC is free to move the .NET `string` during the native dispatch call. The generated stub must also account for this possible GC interaction and employ pinning of managed memory when appropriate.
+
+**Reverse IL Stub**
+
+A Reverse IL Stub will be created so the native caller can provide a native string and have it marshalled to a .NET `string`.
+
+```csharp
+delegate string ToLowerDelegate(string str);
+
+static string ToLowerManaged(string str)
+{
+    return str.ToLower();
+}
+
+[DllImport("NativeLib.dll", EntryPoint = "call_fptr")]
+static extern void CallFptr(IntPtr fptr);
+
+var fptr = Marshal.GetFunctionPointerForDelegate<ToLowerDelegate>(ToLowerManaged);
+CallFptr(fptr);
+
+// Native code - for the Windows platform.
+//  typedef const wchar_t* (*to_lower_t)(const wchar_t* str);
+//  void call_fptr(void* fptr)
+//  {
+//      const wchar_t* lowered = ((to_lower_t)fptr)(L"ABCDEFG");
+//  }
+```
 
 ## C++/CLI <a name="cppcli"></a>
 
@@ -224,9 +297,9 @@ If either of the two deprecated modes are desired, it is strongly recommended to
 
 The C++/CLI language is an extension of C++ that attempts to express .NET interop [Concepts](#concepts) in C++ &ndash; the most important being memory ownership and levels of indirection.
 
-**`&`** &ndash; A native reference to native memory. This is the [C++ construct](https://en.cppreference.com/w/cpp/language/reference) and has the same semantics. This should not be confused with the `&` defined above when talking about managed references in IL &ndash; a completely different language.
+**`&`** &ndash; A native reference to native memory. This is the [C++ construct][cppdoc_reference] and has the same semantics. This should not be confused with the `&` defined above when talking about managed references in IL &ndash; a completely different language.
 
-**`*`** &ndash; A native pointer to native memory. This is the [C++ construct](https://en.cppreference.com/w/cpp/language/pointer) and has the same semantics.
+**`*`** &ndash; A native pointer to native memory. This is the [C++ construct][cppdoc_pointer] and has the same semantics.
 
 **`%`** &ndash; A managed reference, also called a ["tracking reference"](https://docs.microsoft.com/cpp/dotnet/how-to-use-tracking-references-in-cpp-cli), to managed memory. This is a new construct and provides symmetry with the native `&` construct but for managed.
 
@@ -238,15 +311,17 @@ Regardless of how these constructs are used in practice, their function should b
 
 ### Activation of the .NET runtime <a name="cppcli_activation"></a>
 
-Introducing .NET into an existing native application is a common scenario where C++/CLI is employed. Imagine a large native application that would like to leverage an existing .NET library. Since the applicaion is native, this would imply that a .NET runtime instance is not already running in the process and the main entry point is native (for example, [`int main()`](https://en.cppreference.com/w/cpp/language/main_function)). When a C++/CLI assembly is loaded into the process, the .NET runtime must be initialized and prepared to operate in this process prior to any managed code running.
+Introducing .NET into an existing native application is a common scenario where C++/CLI is employed. Imagine a large native application that would like to leverage an existing .NET library. Since the applicaion is native, this would imply that a .NET runtime instance is not already running in the process and the main entry point is native (for example, [`int main()`][cppdoc_mainfunction]). When a C++/CLI assembly is loaded into the process, the .NET runtime must be initialized and prepared to operate in this process prior to any managed code running.
 
 There are are two types of .NET runtime activation for C++/CLI &ndash; .NET Framework and .NET Core 3.1/.NET 5+. These two types are mechanically similar once the .NET runtime is loaded and initialized but prior to that the details are very different.
 
 **.NET Framework** &ndash; The C++/CLI assembly is implicitly linked against `mscoree.lib`. The linking indicates the assembly has a dependency on the native `mscoree.dll` binary and must be loaded prior to the assembly being executed. The `mscoree.dll` binary is located globally (for example, `%SystemRoot%\System32\mscoree.dll`) on the Windows platform and facilitates loading the .NET runtime. The version of the runtime (that is, `2.0`, `3.5`, or `4.5`+) that is loaded is influenced by additional flags passed during the compilation, an `app.config`, or global settings.
 
-**.NET Core 3.1** and **.NET 5+** &ndash; The C++/CLI assembly is implicitly linked against `ijwhost.lib` and thus requires `ijwhost.dll` during load. The `ijwhost.dll` binary is not necessarily globally installed and available. This makes it a dependency that must be provided in another manner (for example, update `PATH` environment variable). Once the `ijwhost.dll` is loaded, it reads an associated `<CPPCLI_ASSEMBLY_NAME>.runtimeconfig.json` file to determine which .NET runtime is needed by the assembly. If an existing .NET runtime is already loaded, `ijwhost.dll` will verify that the loaded runtime supports the needs of the C++/CLI assembly. This includes validation that all requested frameworks exist and match the requested versions. Framework version reconciliation is non-trivial and has many options that are described in detail [here](https://github.com/dotnet/runtime/blob/main/docs/design/features/framework-version-resolution.md). The design document for this process can be found in the [`dotnet/runtime`][design_ijw_activation] repository.
+**.NET Core 3.1** and **.NET 5+** &ndash; The C++/CLI assembly is implicitly linked against `ijwhost.lib` and thus requires `ijwhost.dll` during load. The `ijwhost.dll` binary is not necessarily globally installed and available. This makes it a dependency that must be provided in another manner (for example, update `PATH` environment variable). Once the `ijwhost.dll` is loaded, it reads an associated `<CPPCLI_ASSEMBLY_NAME>.runtimeconfig.json` file to determine which .NET runtime is needed by the assembly. If an existing .NET runtime is already loaded, `ijwhost.dll` will verify that the loaded runtime supports the needs of the C++/CLI assembly. This includes validation that all requested frameworks exist and match the requested versions. Framework version reconciliation is non-trivial and has many options that are described in detail [here][design_framework_resolution]. The design document for this process can be found in the [`dotnet/runtime`][design_ijw_activation] repository.
 
 Once the specific native dependency (that is, `mscoree.dll`/`ijwhost.dll`) is loaded, all managed exports exposed to native code are "thunked". This thunk provides a level of indirection between the actual managed function and the calling native code in order to load the .NET runtime on demand. The first time a managed function is called by native code, the thunk is executed and a .NET runtime loaded or the existing one confirmed to be compatible and adopted. All native exports are then populated with the appropriate managed function. Only one managed call must pay this initialization price since all thunks for an assembly will be updated when it is loaded into a .NET runtime. After a .NET runtime has loaded the assembly and the managed function thunks have been updated, the interop experience follows all the rules and principles described in the [Concepts](#concepts) section.
+
+Aside from the `mscoree.dll`/`ijwhost.dll` differences, there are other functional discrepancies between .NET Framework and .NET Core 3.1/.NET 5+. These are captured in official documentation for transitioning C++/CLI from [.NET Framework to a newer .NET version](https://docs.microsoft.com/dotnet/core/porting/cpp-cli).
 
 
 <!--
@@ -265,7 +340,7 @@ Once the specific native dependency (that is, `mscoree.dll`/`ijwhost.dll`) is lo
 
 Multiple tools exist for building interop solutions in .NET interop. Below is a list of tools that may be useful for .NET applications with interop requirements.
 
-[SharpGenTools](https://github.com/SharpGenTools/SharpGenTools) &ndash; Compile time generation of interop marshalling code for P/Invokes and the `IUnknown` ABI.
+[SharpGenTools][repo_sharpgentools] &ndash; Compile time generation of interop marshalling code for P/Invokes and the `IUnknown` ABI.
 
 [C#/WinRT][repo_cswinrt] &ndash; Compile time generation of WinRT type projections into .NET.
 
@@ -281,11 +356,26 @@ Multiple tools exist for building interop solutions in .NET interop. Below is a 
 
 <!-- Reusable links -->
 
-[api_dllimport]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.dllimportattribute
+[api_dllimportattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.dllimportattribute
+[api_exception]:https://docs.microsoft.com/dotnet/api/system.exception
 [api_gchandle]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.gchandle
+[api_gchandletype]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.gchandletype
 [api_iunknown]:https://docs.microsoft.com/windows/win32/api/unknwn/nn-unknwn-iunknown
+[api_marshalasattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.marshalasattribute
 [api_object]:https://docs.microsoft.com/dotnet/api/system.object
+[api_outattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.outattribute
+[api_preservesigattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.preservesigattribute
+[api_safehandle]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.safehandle
+[api_unmanagedfunctionpointerattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.unmanagedfunctionpointerattribute
 
+<!-- The cppreference site doesn't have a language neutral redirect -->
+[cppdoc_char]:https://en.cppreference.com/w/cpp/keyword/char
+[cppdoc_mainfunction]:https://en.cppreference.com/w/cpp/language/main_function
+[cppdoc_pointer]:https://en.cppreference.com/w/cpp/language/pointer
+[cppdoc_reference]:https://en.cppreference.com/w/cpp/language/reference
+[cppdoc_wchar_t]:https://en.cppreference.com/w/cpp/keyword/wchar_t
+
+[design_framework_resolution]:https://github.com/dotnet/runtime/blob/main/docs/design/features/framework-version-resolution.md
 [design_ijw_activation]:https://github.com/dotnet/runtime/blob/main/docs/design/features/IJW-activation.md
 
 [doc_blittable]:https://docs.microsoft.com/dotnet/framework/interop/blittable-and-non-blittable-types
@@ -303,6 +393,8 @@ Multiple tools exist for building interop solutions in .NET interop. Below is a 
 [repo_cswinrt]:https://github.com/microsoft/CsWinRT
 [repo_dnne]:https://github.com/AaronRobinsonMSFT/DNNE
 [repo_mem_doc]:https://github.com/Maoni0/mem-doc
+[repo_sharpgentools]:https://github.com/SharpGenTools/SharpGenTools
 
+[wiki_hresult]:https://wikipedia.org/wiki/HRESULT
 [wiki_x86callconv]:https://wikipedia.org/wiki/X86_calling_conventions
 [wiki_valuereftypes]:https://wikipedia.org/wiki/Value_type_and_reference_type
