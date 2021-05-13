@@ -11,7 +11,7 @@
     - [Garbage Collection](#gc) &ndash; Pinning and `GCHandle`s.
     - [Referencing Memory](#referencingmemory).
     - [Blittable vs Unmanaged types](#blittablevsunmanaged).
-    - [IL Stubs and Reverse IL Stubs](#ilstubs) &ndash; How stubs are generated and runtime optimizations.
+    - [IL Stubs and Reverse IL Stubs](#ilstubs) &ndash; Generation of IL Stubs for marshalling support.
 - [C++/CLI](#cppcli) &ndash; Merging .NET and C++ into a single language.
     - [C++ language extensions](#cppcli_cpplangext).
     - [Activation of the .NET runtime](#cppcli_activation).
@@ -207,15 +207,19 @@ The opposite case is also possible &ndash; blittable but not unmanaged. Single d
 
 The transition between a managed and native environment during functions calls may require help for various reasons. The most obvious cases involve marshalling types that aren't blittable as was [previously illustrated](#transition), but other cases occur when the semantics of the call are altered to improve the interop experience. For example, consider the [`PreserveSig`](https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.dllimportattribute.preservesig) field on [`DllImportAttribute`][api_dllimportattr]. This field indicates if APIs that return a Windows' [`HRESULT`][wiki_hresult] error code should convert that error code into a .NET [`Exception`][api_exception] or retain the original function signature and return an `int`. This translation is handled in an ad-hoc basis based on the function declaration and is performed by the runtime generated IL Stub.
 
-Before discussing what these stubs do, lets define what they don't do. The stubs themselves do not perform any GC mode transitions (that is, [switch from Preemptive to Cooperative mode][doc_botr]). That transition logic is performed around the stubs but added by the JIT during JIT compilation. The stubs are also not responsible for handling native calling conventions. Prior to .NET 6, the generated IL Stubs were involved in calling conventions under certain circumstances when calling a COM or C++ member function on Windows. A consequence of having the IL Stubs handle aspects of calling conventions meant that anyone wanting to auto-generate interop code also had to handle these same aspects. As of .NET 5, the IL Stubs also don't do anything that can't be done in C#. Prior to C# function pointers, the IL Stubs used IL instructions that were not representable in C# and therefore were difficult to be source generated.
+Before discussing what these stubs do, let's define what they don't do.
+- The stubs themselves do not perform any GC mode transitions (that is, [switch from Preemptive to Cooperative mode][doc_botr]). That transition logic is performed around the stubs but added by the JIT during JIT compilation.
+- The stubs are not responsible for handling native calling conventions. Prior to .NET 6, the generated IL Stubs were involved in calling conventions under certain circumstances when calling a COM or C++ member function on Windows. A consequence of having the IL Stubs handle aspects of calling conventions meant that anyone wanting to auto-generate interop code had to handle these same aspects.
+- As of .NET 5, IL Stubs don't do anything that can't be done in C#. Prior to C# function pointers, the IL Stubs used IL instructions that were not representable in C# and therefore were difficult to be source-generated.
 
 Let's enumerate what IL Stubs do and what influences them.
 
 - Respond to the fields on the [`DllImportAttribute`][api_dllimportattr]. Each of the available fields influences either the logic in the IL Stub or the intended native target.
-- Respond to interop-related attributes that control transitioning or marshalling behavior. For example, see [`PreserveSigAttribute`][api_preservesigattr] and [`UnmanagedFunctionPointerAttribute`][api_unmanagedfunctionpointerattr].
+- Respond to interop-related attributes that control transitioning or marshalling behavior. For example, see [`PreserveSigAttribute`][api_preservesigattr] and [`UnmanagedFunctionPointerAttribute`][api_unmanagedfunctionpointerattr], and [`MarshalAsAttribute`][api_marshalasattr].
 - Marshal each argument into the appropriate form for the target. For example, if a .NET `string` is being passed to a native function, then the stub will convert it to a `wchar_t const *` by default on Windows. Conversely, if a `wchar_t const *` is passed to a Reverse IL Stub from native then that stub is responsible for converting it to a .NET `string`.
 - Marshal out all non-[`in`](
-https://docs.microsoft.com/dotnet/csharp/language-reference/keywords/in-parameter-modifier) by-ref arguments and the return type to the caller.
+https://docs.microsoft.com/dotnet/csharp/language-reference/keywords/in-parameter-modifier) by-ref arguments and the return type to the caller. The [`OutAttribute`][api_outattr] is a special case that indicates out semantics should be followed and can be applied to an argument that is passed by-value instead of by-ref.
+- The [`MarshalAsAttribute`][api_marshalasattr] deserves special mention as it can heavily influence how any argument or return value is marshalled.
 - Ensure the unmanaged/managed boundary is seamless as it relates to memory leaks or corruption. For example, if passing a [`SafeHandle`][api_safehandle] derived type to a native function, a leak of that handle shouldn't be possible.
 
 An IL Stub or Reverse IL Stub will be generated in several circumstances. The following C# examples represent some of these circumstances.
@@ -240,8 +244,8 @@ delegate string ToLowerDelegate(string str);
 IntPtr mod = NativeLibrary.Load("NativeLib.dll");
 IntPtr fptr = NativeLibrary.GetExport(mod, "to_lower");
 
-var toLower = Marshal.GetDelegateForFunctionPointer<ToLowerDelegate>(fptr);
-var lowered = toLower("ABCDEFG");
+string toLower = Marshal.GetDelegateForFunctionPointer<ToLowerDelegate>(fptr);
+string lowered = toLower("ABCDEFG");
 ```
 
 The generated stub in the above examples would convert the supplied .NET `string` to the appropriate native representation. This conversion carries some implications that are worth considering. The .NET platform internally stores `string` values as UTF-16 encoded values. This means that if the native environment were expecting a UTF-8 or ANSI code page encoding, that would need to be handled by some logic. Additionally the GC is free to move the .NET `string` if it helps optimize memory usage. The IL Stub is responsible for this logic. The `to_lower()` function also returns a string, which means the reverse operation (converting the native representation to a .NET `string`, including encoding considerations), must be taken into account.
@@ -359,7 +363,9 @@ Multiple tools exist for building interop solutions in .NET interop. Below is a 
 [api_gchandle]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.gchandle
 [api_gchandletype]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.gchandletype
 [api_iunknown]:https://docs.microsoft.com/windows/win32/api/unknwn/nn-unknwn-iunknown
+[api_marshalasattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.marshalasattribute
 [api_object]:https://docs.microsoft.com/dotnet/api/system.object
+[api_outattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.outattribute
 [api_preservesigattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.preservesigattribute
 [api_safehandle]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.safehandle
 [api_unmanagedfunctionpointerattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.unmanagedfunctionpointerattribute
