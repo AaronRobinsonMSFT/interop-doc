@@ -213,7 +213,7 @@ Let's enumerate what IL Stubs do and what influences them.
 
 - Respond to the fields on the [`DllImportAttribute`][api_dllimportattr]. Each of the available fields influences either the logic in the IL Stub or the intended native target.
 - Respond to interop-related attributes that control transitioning or marshalling behavior. For example, see [`PreserveSigAttribute`][api_preservesigattr] and [`UnmanagedFunctionPointerAttribute`][api_unmanagedfunctionpointerattr].
-- Marshal each argument into the appropriate form for the target. For example, if a .NET `string` is being passed to a native function then by default on Windows it will be converted to a `wchar_t const *`. Conversely, if a `wchar_t const *` is passed to a Reverse IL Stub from native then that stub is responsible for converting it to a .NET `string`.
+- Marshal each argument into the appropriate form for the target. For example, if a .NET `string` is being passed to a native function, then the stub will convert it to a `wchar_t const *` by default on Windows. Conversely, if a `wchar_t const *` is passed to a Reverse IL Stub from native then that stub is responsible for converting it to a .NET `string`.
 - Marshal out all non-[`in`](
 https://docs.microsoft.com/dotnet/csharp/language-reference/keywords/in-parameter-modifier) by-ref arguments and the return type to the caller.
 - Ensure the unmanaged/managed boundary is seamless as it relates to memory leaks or corruption. For example, if passing a [`SafeHandle`][api_safehandle] derived type to a native function, a leak of that handle shouldn't be possible.
