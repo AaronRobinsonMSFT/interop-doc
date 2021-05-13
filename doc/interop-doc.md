@@ -212,11 +212,11 @@ Before discussing what these stubs do, lets define what they don't do. The stubs
 Let's enumerate what IL Stubs do and what influences them.
 
 - Respond to the fields on the [`DllImportAttribute`][api_dllimportattr]. Each of the available fields influences either the logic in the IL Stub or the intended native target.
-- Respond to interop related attributes that control transitioning or marshalling behavior. For example, see [`PreserveSigAttribute`][api_preservesigattr] and [`UnmanagedFunctionPointerAttribute`][api_unmanagedfunctionpointerattr].
+- Respond to interop-related attributes that control transitioning or marshalling behavior. For example, see [`PreserveSigAttribute`][api_preservesigattr] and [`UnmanagedFunctionPointerAttribute`][api_unmanagedfunctionpointerattr].
 - Marshal each argument into the appropriate form for the target. For example, if a .NET `string` is being passed to a native function then by default on Windows it will be converted to a `wchar_t const *`. Conversely, if a `wchar_t const *` is passed to a Reverse IL Stub from native then that stub is responsible for converting it to a .NET `string`.
 - Marshal out all non-[`in`](
 https://docs.microsoft.com/dotnet/csharp/language-reference/keywords/in-parameter-modifier) by-ref arguments and the return type to the caller.
-- Ensure the unmanaged/managed boundary are seamless as it relates to memory leaks or corruption. For example, if passing a [`SafeHandle`][api_safehandle] derived type to a native function a leak of that handle shouldn't be possible.
+- Ensure the unmanaged/managed boundary is seamless as it relates to memory leaks or corruption. For example, if passing a [`SafeHandle`][api_safehandle] derived type to a native function, a leak of that handle shouldn't be possible.
 
 An IL Stub or Reverse IL Stub will be generated in several circumstances. The following C# examples represent some of these circumstances.
 
@@ -228,7 +228,7 @@ The generated stub will marshal the .NET `string` `"ABCDEFG"` to the native func
 [DllImport("NativeLib.dll", EntryPoint = "to_lower")]
 static extern string ToLower(string str);
 
-var lowered = ToLower("ABCDEFG");
+string lowered = ToLower("ABCDEFG");
 ```
 
 Another way to call the native `to_lower()` function is using a `Delegate` type &ndash; which will also require an IL Stub.
@@ -244,7 +244,7 @@ var toLower = Marshal.GetDelegateForFunctionPointer<ToLowerDelegate>(fptr);
 var lowered = toLower("ABCDEFG");
 ```
 
-The generated stub in the above examples would translate the supplied .NET `string` and convert it to the appropriate native representation. Take a moment and consider what that would imply. The .NET platform internally stores `string` values as UTF-16 encoded values. This means that if the native environment were expecting a UTF-8 or ANSI code page encoding that would need to be handled by some logic. Additionally the GC is free to move the .NET `string` if it helps optimize memory usage. The IL Stub is responsible for this logic. The `to_lower()` function returns a string though, which means the reverse operation including encoding considerations must taken into account.
+The generated stub in the above examples would convert the supplied .NET `string` to the appropriate native representation. This conversion carries some implications that are worth considering. The .NET platform internally stores `string` values as UTF-16 encoded values. This means that if the native environment were expecting a UTF-8 or ANSI code page encoding, that would need to be handled by some logic. Additionally the GC is free to move the .NET `string` if it helps optimize memory usage. The IL Stub is responsible for this logic. The `to_lower()` function also returns a string, which means the reverse operation (converting the native representation to a .NET `string`, including encoding considerations), must be taken into account.
 
 **Reverse IL Stub**
 
@@ -272,7 +272,7 @@ CallFptr(fptr);
 //  }
 ```
 
-The above examples represent symmetrical operations for a function that takes a sequence of characters (that is, a string) and returns an new string that has been converted into lowercase letters. The logic of that operation is defined within the function itself but in order to correctly pass the arguments and return the value to the other environment a stub is used.
+The above examples represent symmetrical operations for a function that takes a sequence of characters (that is, a string) and returns a new string that has been converted into lowercase letters. The logic of that operation is defined within the function itself but in order to correctly pass the arguments and return the value to the other environment, a stub is used.
 
 ## C++/CLI <a name="cppcli"></a>
 
@@ -319,7 +319,7 @@ There are are two types of .NET runtime activation for C++/CLI &ndash; .NET Fram
 
 Once the specific native dependency (that is, `mscoree.dll`/`ijwhost.dll`) is loaded, all managed exports exposed to native code are "thunked". This thunk provides a level of indirection between the actual managed function and the calling native code in order to load the .NET runtime on demand. The first time a managed function is called by native code, the thunk is executed and a .NET runtime loaded or the existing one confirmed to be compatible and adopted. All native exports are then populated with the appropriate managed function. Only one managed call must pay this initialization price since all thunks for an assembly will be updated when it is loaded into a .NET runtime. After a .NET runtime has loaded the assembly and the managed function thunks have been updated, the interop experience follows all the rules and principles described in the [Concepts](#concepts) section.
 
-Aside from the `mscoree.dll`/`ijwhost.dll` differences there are other functional discrepancies between .NET Framework and .NET Core 3.1/.NET 5+. These are captured in official documentation for transitioning C++/CLI from [.NET Framework to a newer .NET version](https://docs.microsoft.com/dotnet/core/porting/cpp-cli).
+Aside from the `mscoree.dll`/`ijwhost.dll` differences, there are other functional discrepancies between .NET Framework and .NET Core 3.1/.NET 5+. These are captured in official documentation for transitioning C++/CLI from [.NET Framework to a newer .NET version](https://docs.microsoft.com/dotnet/core/porting/cpp-cli).
 
 
 <!--
