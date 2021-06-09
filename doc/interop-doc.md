@@ -15,9 +15,9 @@
 - [C++/CLI](#cppcli) &ndash; Merging .NET and C++ into a single language.
     - [C++ language extensions](#cppcli_cpplangext).
     - [Activation of the .NET runtime](#cppcli_activation).
+- [Diagnostics](#diagnostics) &ndash; Understanding what is happening.
 
 <!-- 
-- [Diagnostics] &ndash; How to see the generated IL Stub.
 - [COM and `IUnknown`](#comiunknown) &ndash; COM interoperability in .NET.
     - [WinRT](#winrt)
 - [Migration from .NET Framework](#migration) &ndash; Options when migrating from .NET Framework.
@@ -323,9 +323,88 @@ Once the specific native dependency (that is, `mscoree.dll`/`ijwhost.dll`) is lo
 
 Aside from the `mscoree.dll`/`ijwhost.dll` differences, there are other functional discrepancies between .NET Framework and .NET Core 3.1/.NET 5+. These are captured in official documentation for transitioning C++/CLI from [.NET Framework to a newer .NET version](https://docs.microsoft.com/dotnet/core/porting/cpp-cli).
 
+## Diagnostics <a name="diagnostics"></a>
+
+The ability to peer into what is actually happening during an interop scenario is very important. Multiple tools and Runtime onfiguration options exist to help understand the interop scenario while it is underway.
+
+**Runtime tracing**
+
+The CLR has extensive tracing probes built-in. Historically, this information is emitted via an ETW provider on Windows but has been extended to work on all platforms using [`TraceEvent`][nuget_traceevent]. The CLR emits this data is using the `Microsoft-Windows-DotNETRuntime` provider (ID: `{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}`). Specific interop details can be requested using the `InteropKeyword` (ID: `0x2000`) and documented [here](https://docs.microsoft.com/dotnet/framework/performance/interop-etw-events). The data can be collected using a number of tools but the most convenient is [PerfView][repo_perfview].
+
+In .NET Core 3.1/.NET 5+ the interop events contain extensive IL Stub details such as the generated IL instructions. Below is an abridged example for the `sum_ints()` P/Invoke captured and formatted using the PerfView tool.
+
+```xml
+<Event
+    EventName="ILStub/StubGenerated"
+    ManagedInteropMethodToken="0x0600000E"
+    ManagedInteropMethodNamespace="Program"
+    ManagedInteropMethodName="sum_ints"
+    ManagedInteropMethodSignature="int32(int32,int32[])"
+    NativeMethodSignature="unmanaged stdcall int32(int64,native int)"
+    StubMethodSignature="int32(int32,int32[])"
+    StubMethodILCode="// Code size	62 (0x003e)
+    .maxstack 4 
+    .locals (int32,int64,native int,object pinned,int32,int32)
+    // Marshal {
+             /*( 0)*/ ldc.i4.0         
+             /*( 1)*/ stloc.0          
+    IL_0002: /*( 0)*/ nop             // argument {  
+             /*( 0)*/ ldarg.0          
+             /*( 1)*/ conv.i8          
+             /*( 1)*/ stloc.1          
+             /*( 0)*/ nop             // } argument 
+             /*( 0)*/ nop             // argument {  
+             /*( 0)*/ ldc.i4.0         
+             /*( 1)*/ conv.i           
+             /*( 1)*/ stloc.2          
+             /*( 0)*/ ldarg.1          
+             /*( 1)*/ brfalse         IL_0019 
+             /*( 0)*/ ldarg.1          
+             /*( 1)*/ stloc.3          
+             /*( 0)*/ ldloc.3          
+             /*( 1)*/ conv.i           
+             /*( 1)*/ ldc.i4.s        0x10 
+             /*( 2)*/ add              
+             /*( 1)*/ stloc.2          
+    IL_0019: /*( 0)*/ ldc.i4.2         
+             /*( 1)*/ stloc.0          
+             /*( 0)*/ nop             // } argument 
+             /*( 0)*/ nop             // return {  
+             /*( 0)*/ nop             // } return 
+    // } Marshal 
+    // CallMethod {
+             /*( 0)*/ ldloc.1          
+             /*( 1)*/ ldloc.2          
+             /*( 2)*/ call            native int [System.Private.CoreLib] System.StubHelpers.StubHelpers::GetStubContext() 
+             /*( 3)*/ ldc.i4.s        0x20 
+             /*( 4)*/ add              
+             /*( 3)*/ ldind.i          
+             /*( 3)*/ ldind.i          
+             /*( 3)*/ calli           unmanaged stdcall int32(int64,native int) 
+    // } CallMethod 
+    // UnmarshalReturn {
+             /*( 1)*/ nop             // return {  
+             /*( 1)*/ stloc.s         0x5 
+             /*( 0)*/ ldloc.s         0x5 
+             /*( 1)*/ stloc.s         0x4 
+             /*( 0)*/ ldloc.s         0x4 
+             /*( 1)*/ nop             // } return 
+    // } UnmarshalReturn 
+    // Unmarshal {
+             /*( 1)*/ nop             // argument {  
+             /*( 1)*/ nop             // } argument 
+             /*( 1)*/ nop             // argument {  
+             /*( 1)*/ nop             // } argument 
+             /*( 1)*/ ret              
+    // } Unmarshal 
+    "/>
+```
+
+**Runtime logging**
+
+**Debugger**
 
 <!--
-## IL Stubs and Reverse IL Stubs <a name="ilstubs"></a>
 
 ## COM and `IUnknown` <a name="comiunknown"></a>
 
@@ -387,12 +466,15 @@ Multiple tools exist for building interop solutions in .NET interop. Below is a 
 [doc_unmanaged_types]:https://docs.microsoft.com/dotnet/csharp/language-reference/builtin-types/unmanaged-types
 [doc_windatatypes]:https://docs.microsoft.com/windows/win32/winprog/windows-data-types
 
+[nuget_traceevent]:https://www.nuget.org/packages/Microsoft.Diagnostics.Tracing.TraceEvent/
+
 [spec_ecma335]:https://www.ecma-international.org/publications-and-standards/standards/ecma-335/
 [spec_ecma372]:https://www.ecma-international.org/publications-and-standards/standards/ecma-372/
 
 [repo_cswinrt]:https://github.com/microsoft/CsWinRT
 [repo_dnne]:https://github.com/AaronRobinsonMSFT/DNNE
 [repo_mem_doc]:https://github.com/Maoni0/mem-doc
+[repo_perfview]:https://github.com/Microsoft/perfview
 [repo_sharpgentools]:https://github.com/SharpGenTools/SharpGenTools
 
 [wiki_hresult]:https://wikipedia.org/wiki/HRESULT
