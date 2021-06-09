@@ -17,7 +17,7 @@
     - [Activation of the .NET runtime](#cppcli_activation).
 - [Diagnostics](#diagnostics) &ndash; Understanding what is happening.
 
-<!-- 
+<!--
 - [COM and `IUnknown`](#comiunknown) &ndash; COM interoperability in .NET.
     - [WinRT](#winrt)
 - [Migration from .NET Framework](#migration) &ndash; Options when migrating from .NET Framework.
@@ -141,7 +141,7 @@ What should be known about the GC is that memory allocated by the GC (that is, m
 1) The GC collects the memory since there is no other managed code using it.
 1) The GC moves the memory to a different address.
 
-One coordination mechanism was demonstrated in the [Introduction](#intro). Recall that the `int[]` passed to the P/Invoke was "pinned" prior to passing the `int*` to native code. Pinning let the GC know the `int[]` shouldn't be moved from its current location in memory. It was still referenced in the method calling the native function so issue (1) above wasn't a concern. The example in the Introduction was in IL, but pinning can be accomplished in C# using the [`fixed`](https://docs.microsoft.com/dotnet/csharp/language-reference/keywords/fixed-statement) statement. 
+One coordination mechanism was demonstrated in the [Introduction](#intro). Recall that the `int[]` passed to the P/Invoke was "pinned" prior to passing the `int*` to native code. Pinning let the GC know the `int[]` shouldn't be moved from its current location in memory. It was still referenced in the method calling the native function so issue (1) above wasn't a concern. The example in the Introduction was in IL, but pinning can be accomplished in C# using the [`fixed`](https://docs.microsoft.com/dotnet/csharp/language-reference/keywords/fixed-statement) statement.
 
 Another mechanism is to use a [`GCHandle`][api_gchandle]. This provides a level of indirection to managed memory which means the `GCHandle` can be passed around instead of the managed memory itself. The `GCHandle` helps with (1) since it extends the managed memory's lifetime. The `GCHandle` API is powerful and has additional options that also enable it to handle (2) &ndash; see [`GCHandleType.Pinned`][api_gchandletype] &ndash; and even permit some insight into if the managed memory was collected &ndash; see [`GCHandleType.WeakTrackResurrection`][api_gchandletype].
 
@@ -343,60 +343,60 @@ In .NET Core 3.1/.NET 5+ the interop events contain extensive IL Stub details su
     NativeMethodSignature="unmanaged stdcall int32(int64,native int)"
     StubMethodSignature="int32(int32,int32[])"
     StubMethodILCode="// Code size	62 (0x003e)
-    .maxstack 4 
+    .maxstack 4
     .locals (int32,int64,native int,object pinned,int32,int32)
     // Marshal {
-             /*( 0)*/ ldc.i4.0         
-             /*( 1)*/ stloc.0          
-    IL_0002: /*( 0)*/ nop             // argument {  
-             /*( 0)*/ ldarg.0          
-             /*( 1)*/ conv.i8          
-             /*( 1)*/ stloc.1          
-             /*( 0)*/ nop             // } argument 
-             /*( 0)*/ nop             // argument {  
-             /*( 0)*/ ldc.i4.0         
-             /*( 1)*/ conv.i           
-             /*( 1)*/ stloc.2          
-             /*( 0)*/ ldarg.1          
-             /*( 1)*/ brfalse         IL_0019 
-             /*( 0)*/ ldarg.1          
-             /*( 1)*/ stloc.3          
-             /*( 0)*/ ldloc.3          
-             /*( 1)*/ conv.i           
-             /*( 1)*/ ldc.i4.s        0x10 
-             /*( 2)*/ add              
-             /*( 1)*/ stloc.2          
-    IL_0019: /*( 0)*/ ldc.i4.2         
-             /*( 1)*/ stloc.0          
-             /*( 0)*/ nop             // } argument 
-             /*( 0)*/ nop             // return {  
-             /*( 0)*/ nop             // } return 
-    // } Marshal 
+             /*( 0)*/ ldc.i4.0
+             /*( 1)*/ stloc.0
+    IL_0002: /*( 0)*/ nop             // argument {
+             /*( 0)*/ ldarg.0
+             /*( 1)*/ conv.i8
+             /*( 1)*/ stloc.1
+             /*( 0)*/ nop             // } argument
+             /*( 0)*/ nop             // argument {
+             /*( 0)*/ ldc.i4.0
+             /*( 1)*/ conv.i
+             /*( 1)*/ stloc.2
+             /*( 0)*/ ldarg.1
+             /*( 1)*/ brfalse         IL_0019
+             /*( 0)*/ ldarg.1
+             /*( 1)*/ stloc.3
+             /*( 0)*/ ldloc.3
+             /*( 1)*/ conv.i
+             /*( 1)*/ ldc.i4.s        0x10
+             /*( 2)*/ add
+             /*( 1)*/ stloc.2
+    IL_0019: /*( 0)*/ ldc.i4.2
+             /*( 1)*/ stloc.0
+             /*( 0)*/ nop             // } argument
+             /*( 0)*/ nop             // return {
+             /*( 0)*/ nop             // } return
+    // } Marshal
     // CallMethod {
-             /*( 0)*/ ldloc.1          
-             /*( 1)*/ ldloc.2          
-             /*( 2)*/ call            native int [System.Private.CoreLib] System.StubHelpers.StubHelpers::GetStubContext() 
-             /*( 3)*/ ldc.i4.s        0x20 
-             /*( 4)*/ add              
-             /*( 3)*/ ldind.i          
-             /*( 3)*/ ldind.i          
-             /*( 3)*/ calli           unmanaged stdcall int32(int64,native int) 
-    // } CallMethod 
+             /*( 0)*/ ldloc.1
+             /*( 1)*/ ldloc.2
+             /*( 2)*/ call            native int [System.Private.CoreLib] System.StubHelpers.StubHelpers::GetStubContext()
+             /*( 3)*/ ldc.i4.s        0x20
+             /*( 4)*/ add
+             /*( 3)*/ ldind.i
+             /*( 3)*/ ldind.i
+             /*( 3)*/ calli           unmanaged stdcall int32(int64,native int)
+    // } CallMethod
     // UnmarshalReturn {
-             /*( 1)*/ nop             // return {  
-             /*( 1)*/ stloc.s         0x5 
-             /*( 0)*/ ldloc.s         0x5 
-             /*( 1)*/ stloc.s         0x4 
-             /*( 0)*/ ldloc.s         0x4 
-             /*( 1)*/ nop             // } return 
-    // } UnmarshalReturn 
+             /*( 1)*/ nop             // return {
+             /*( 1)*/ stloc.s         0x5
+             /*( 0)*/ ldloc.s         0x5
+             /*( 1)*/ stloc.s         0x4
+             /*( 0)*/ ldloc.s         0x4
+             /*( 1)*/ nop             // } return
+    // } UnmarshalReturn
     // Unmarshal {
-             /*( 1)*/ nop             // argument {  
-             /*( 1)*/ nop             // } argument 
-             /*( 1)*/ nop             // argument {  
-             /*( 1)*/ nop             // } argument 
-             /*( 1)*/ ret              
-    // } Unmarshal 
+             /*( 1)*/ nop             // argument {
+             /*( 1)*/ nop             // } argument
+             /*( 1)*/ nop             // argument {
+             /*( 1)*/ nop             // } argument
+             /*( 1)*/ ret
+    // } Unmarshal
     "/>
 ```
 
