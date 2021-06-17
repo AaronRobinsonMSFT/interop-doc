@@ -325,13 +325,13 @@ Aside from the `mscoree.dll`/`ijwhost.dll` differences, there are other function
 
 ## Diagnostics <a name="diagnostics"></a>
 
-The ability to peer into what is actually happening during an interop scenario is very important. Multiple tools and Runtime onfiguration options exist to help understand the interop scenario while it is underway.
+The ability to observe what the runtime is doing during an interop scenario is very important. Multiple tools and Runtime onfiguration options exist to help understand the interop scenario while it is underway.
 
 **Runtime tracing**
 
 The CLR has extensive tracing probes built-in. Historically, this information is emitted via an ETW provider on Windows but has been extended to work on all platforms using [`TraceEvent`][nuget_traceevent]. The CLR emits this data is using the `Microsoft-Windows-DotNETRuntime` provider (ID: `{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}`). Specific interop details can be requested using the `InteropKeyword` (ID: `0x2000`) and documented [here](https://docs.microsoft.com/dotnet/framework/performance/interop-etw-events). The data can be collected using a number of tools but the most convenient is [PerfView][repo_perfview].
 
-In .NET Core 3.1/.NET 5+ the interop events contain extensive IL Stub details such as the generated IL instructions. Below is an abridged example for the `sum_ints()` P/Invoke captured and formatted using the PerfView tool.
+In .NET Core 3.1/.NET 5+ the interop events contain extensive IL Stub details such as the generated IL instructions. Below is an abridged example for the `sum_ints()` P/Invoke captured and formatted using the PerfView tool. Observe the signatures in the event payload &ndash; this is useful when validating the declared P/Invoke signature expresses what is desired.
 
 ```xml
 <Event
@@ -400,9 +400,19 @@ In .NET Core 3.1/.NET 5+ the interop events contain extensive IL Stub details su
     "/>
 ```
 
-**Runtime logging**
-
 **Debugger**
+
+The CoreCLR runtime has a rich diagnostic story for inspecting internal data structures. A common way to investigate interop issues is by using the [SOS][doc_sos] debugger extension. SOS can be loaded into either [LLDB](https://lldb.llvm.org/) or [WinDBG](https://docs.microsoft.com/windows-hardware/drivers/debugger/debugger-download-tools). All available commands are documented [here](https://docs.microsoft.com/dotnet/core/diagnostics/sos-debugging-extension), but the most common commands to aid in investigating interop related issues are:
+
+- `DumpObj` &ndash; Dump details of a managed object.
+- `GCInfo` &ndash; Display GC sensitive locations for a `MethodDesc` (that is, a managed method).
+- `IP2MD` &ndash; Map an instruction pointer value to a `MethodDesc`.
+- `U` &ndash; Use with the `-gcinfo` flag to dissassembly a managed method and interleave GC information.
+
+Only on Windows and not documented.
+- `DumpCCW` &ndash; Show details of the COM Callable Wrapper.
+- `DumpRCW` &ndash; Show details of the Runtime Callable Wrapper.
+
 
 <!--
 
@@ -463,6 +473,7 @@ Multiple tools exist for building interop solutions in .NET interop. Below is a 
 [doc_cppcli]:https://docs.microsoft.com/cpp/dotnet/dotnet-programming-with-cpp-cli-visual-cpp
 [doc_pinning]:https://docs.microsoft.com/dotnet/framework/interop/copying-and-pinning
 [doc_pinvoke]:https://docs.microsoft.com/dotnet/standard/native-interop/pinvoke
+[doc_sos]:https://docs.microsoft.com/dotnet/core/diagnostics/dotnet-sos
 [doc_unmanaged_types]:https://docs.microsoft.com/dotnet/csharp/language-reference/builtin-types/unmanaged-types
 [doc_windatatypes]:https://docs.microsoft.com/windows/win32/winprog/windows-data-types
 
