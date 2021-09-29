@@ -15,15 +15,15 @@
 - [C++/CLI](#cppcli) &ndash; Merging .NET and C++ into a single language.
     - [C++ language extensions](#cppcli_cpplangext).
     - [Activation of the .NET runtime](#cppcli_activation).
+- [COM and `IUnknown`](#comiunknown) &ndash; Working with COM and the `IUnknown` ABI.
+    - [WinRT](#winrt).
 - [Diagnostics](#diagnostics) &ndash; Understanding what is happening.
+- [Tooling](#tooling) &ndash; Tools that can help building interop scenarios.
 
 <!--
-- [COM and `IUnknown`](#comiunknown) &ndash; COM interoperability in .NET.
-    - [WinRT](#winrt)
 - [Migration from .NET Framework](#migration) &ndash; Options when migrating from .NET Framework.
 - [Gotchas](#gotchas) &ndash; Common interop issues.
 -->
-- [Tooling](#tooling) &ndash; Tools that can help building interop scenarios.
 
 ## Introduction <a name="intro"></a>
 
@@ -323,13 +323,151 @@ Once the specific native dependency (that is, `mscoree.dll`/`ijwhost.dll`) is lo
 
 Aside from the `mscoree.dll`/`ijwhost.dll` differences, there are other functional discrepancies between .NET Framework and .NET Core 3.1/.NET 5+. These are captured in official documentation for transitioning C++/CLI from [.NET Framework to a newer .NET version](https://docs.microsoft.com/dotnet/core/porting/cpp-cli).
 
+## COM and `IUnknown` <a name="comiunknown"></a>
+
+The [Component Object Model (COM)][doc_com] was first presented in 1993 and has been a integral part of the Windows platform since then. The history of .NET can't be written without COM and its influence and impact can be seen in many aspect but none as prominently as interoperability. This section is not intended to fully describe all COM concerns in .NET but will instead focus on the nuts and bolts of how COM support is built-in, how the entire COM interop system can be replaced, and some considerations when engaging with COM from .NET.
+
+### `IUnknown` &ndash; the base of COM
+
+The base of all COM types is the [`IUnknown` interface][api_iunknown]. This simple interface, consisting of 3 functions, is designed to handle lifetime management and how to convert from one interface to another. 
+
+Lifetime management is handled by a [reference counting][wiki_reference_counting] method. Reference counting provides accurate lifetime management but has two major drawbacks: circular references between instances are cumbersome and it has much higher overhead than other garbage collection techniques. The [`AddRef()`](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-addref) and [`Release()`](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-release) functions handle this lifetime management. Implementing these functions is straight forward, even in a thread safe manner. The basic rule is, when the reference count reaches 0 the memory for the instance can safely be free.
+
+Moving between interfaces is accomplished via the [`QueryInterface()`](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(refiid_void)) function. Conceptually, `QueryInterface()` is similar to the [C# `as` cast](https://docs.microsoft.com/dotnet/csharp/language-reference/operators/type-testing-and-cast#as-operator) &ndash; attempt to cast to a type and get the desired type or return `null`. As opposed to the lifetime management functions properly implementing `QueryInterface()` requires some care and there are [specific rules that must be followed](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(refiid_void)#remarks). These rules will not be enumerated here as the official documentation is clear, but they are fundamental to maintaining the integrity of lifetime management and the COM type system.
+
+The last feature of the `IUnknown` interface is its name or rather ID. In COM all types have an ID defined as a 128-bit [`UUID`][wiki_uuid], commonly called a `GUID` in COM and .NET. The `UUID`, as an ID, is used for all COM types (for example, interfaces (`IID`), coclasses (`CLSID`), records, etc). In COM, this means the name isn't actually interesting but actually the `UUID` is what is important &ndash; this will become important in .NET. Note that the `UUID`s on Windows have a [mixed endian encoding](https://wikipedia.org/wiki/Universally_unique_identifier#Encoding) that can cause confusion.
+
+#### COM interface ABI <a name="com_interface_abi"></a>
+
+All interfaces that inherit from `IUnknown` are defined in memory in a way that permits interoperability with the C language &ndash; a goal of COM. An example will help to illustrate how all `IUnknown` interfaces are stored in memory. Imagine a COM type, `CClass`, that implements two COM interfaces (for example, `IInterface1` and `IInterface2`). The `IInterface1` and `IInterface2` interfaces each define a single function, `Work1()` and `Work2()` respectively, beyond inheriting from `IUnknown`. Through some COM function an instance of `CClass` is allocated at memory address `0x10000` and the initial interface is `IInterface1`. COM dictates that at that address the first pointer sized value points to the [virtual function table][wiki_vtable] (vtable), `0x30000` in the example. Within each vtable, the interface member functions are laid out sequentially.
+
+```
+0x10000  0x20000  <CClass::IInterface1 vtable>
+0x10008  0x30000  <CClass::IInterface2 vtable>
+0x10010  <CClass fields>
+...
+0x20000  <Address of CClass::QueryInterface>
+0x20008  <Address of CClass::AddRef>
+0x20010  <Address of CClass::Release>
+0x20018  <Address of CClass::IInterface1::DoWork1>
+...
+0x30000  <Address of CClass::QueryInterface>
+0x30008  <Address of CClass::AddRef>
+0x30010  <Address of CClass::Release>
+0x30018  <Address of CClass::IInterface2::DoWork2>
+```
+
+### COM interfaces and classes
+
+The COM system is represent by interfaces and classes. The interfaces define the API contract and the classes define an implementation of that contract. For example, let us define an interface for parsing a string and returning it as an integer. COM types are typically defined using the [Microsoft Interface Definition Language (MIDL)][doc_midl] and is used in the following example.
+
+```idl
+[
+    object,
+    uuid(4298318b-5934-476d-b65a-58cdce3071ba)
+]
+interface IParseNumber : IUnknown
+{
+    HRESULT Parse(
+        [in, string] const wchar_t* str,
+        [out] int* num);
+}
+```
+
+The semantics of the `Parse()` function on the `IParseNumber` interface should be clear &ndash; feel free to ignore the esoteric MIDL syntax. The idea is given a string, `str`, and a pointer to an integer, `num`, parse the string and return the value to the caller via the `int*`. The [`HRESULT`][wiki_hresult] return type, a typdef'd C `unsigned long`, represents an "error code" pattern that is used throughout COM &ndash; exceptions are not permitted to cross a COM method boundary. Now that we have defined the interface API, let us examine an implementation definition.
+
+```idl
+[
+  uuid(2d65f911-b8b6-4f46-b8f4-b5389ab8c082),
+  version(1.0),
+]
+library NumberParsing
+{
+    [uuid(6f560103-971c-4092-9f18-888f06ac2d26)]
+    coclass CParseAsDecimal
+    {
+        [default] interface IParseNumber;
+    };
+
+    [uuid(361a4edf-d6b4-4c08-a2fe-2a8c21ed377c)]
+    coclass CParseAsHexadecimal
+    {
+        [default] interface IParseNumber;
+    };
+};
+```
+
+The above defines two implementations of the `IParseNumber` interface. The first, `CParseAsDecimal`, implies that it will parse the supplied string as a decimal value and the second, `CParseAsHexadecimal`, implies parsing as a hexadecimal value. The salient point in the implementation snippet is that each `coclass`, read "COM class", has its own `UUID`. One could then imagine, based on the previous discussion of `UUID`, that in order to instantiate a specific implementation the associated `UUID` should be passed to some function and the desired implementation would be returned. How one implements a COM class or registers it for activation is beyond the scope of this document. The key take away here is an interface defines an API and a class provides an implementation of that API.
+
+### Additional COM features <a name="additional_com_features" />
+
+This list represents some of the more impactful features of COM as it relates to interoperability with .NET.
+
+- [Apartments][doc_com_apartments] &ndash; Organizational structure for threading in COM.
+- [Security](https://docs.microsoft.com/windows/win32/com/security-in-com) &ndash; COM provides a rich security model for class activation and proxied permission.
+- Remote Procedural Calls (RPC) &ndash; COM can perform RPC with another process locally or across a network.
+
+### COM and .NET
+
+Interoperability between COM and .NET has existed since the beginning of the runtime and always been a first-class scenario. A conceptual overview of the wrappers and how the built-in system works can be found [here][doc_wrappers_builtin]. The below provides some of the low-level details about COM and COM interop that could enable someone to create their own COM interop solution. For .NET 5+ an alternative to the built-in COM interop system is available through the [`ComWrappers` API][api_comwrappers] &ndash; a [`ComWrappers` tutorial][doc_wrappers_api_tutorial] provides some of the following content.
+
+With the introduction of the `ComWrappers` API in .NET 5, terminology for COM interop needed to be slightly revised to help disambiguate between built-in COM interop wrappers and wrappers provided by a `ComWrappers` sub-class. The Runtime Callable Wrapper (RCW) and COM Callable Wrapper (CCW) are terms used to describe wrappers with the built-in COM interop, where as Native Object Callable Wrapper (NOCW) and Managed Object Wrapper (MOW) are used for wrappers created by a `ComWrappers` sub-class. It is still common to refer to a NOCW as a RCW or MOW as a CCW if there is no ambiguity in the current context with built-in COM interop wrappers.
+
+**Runtime Callable Wrapper (RCW) / Native Object Callable Wrapper (NOCW)**
+
+Wrappers for native `IUnknown` instances are designed to project a managed API surface for a native implementation of a COM interface. This is similar to how a P/Invoke is designed to project a C-style function in managed code using `DllImport`. There are two primary functional concerns for an RCW/NOCW implementation.
+
+1) Maintain correct lifetime semantics for the instance &ndash; `AddRef()`/`Release()`.
+1) Limit costly `QueryInterface()` calls to detect "is supported" during wrapper creation. The "is supported" question should be "pay for play" since it is not possible to `QueryInterface()` for every possible COM interface.
+
+A functionally optional, but performance critical, secondary concern is avoiding the allocation of multiple managed wrappers for the same native instance. This implies a mapping between native instance and managed wrapper, which means a caching mechanism that is also GC aware which has much broader implications. Since normal COM objects have thread affinity that requires all functions call to be performed on a specific group of threads or worse, a specific thread &ndash; see [COM Apartments][doc_com_apartments]. Requiring operations to be executed on specific threads pushes behavioral requirements onto the GC, which typically is unaware of any interop scenario. The runtime must provide a mechanism in order to efficiently solve this caching issue.
+
+The maintaining of lifetime semantics requires consumers to be able to call `AddRef()` or `Release()` at the correct time. This requires being able to dispatch calls on a native instance. If we understand the [COM interface ABI](#com_interface_abi), using C# function pointers makes this straight forward. Given a native instance as a `void*` or `IntPtr` in C#, then dispatching to the `AddRef()`, second slot, or `Release()`, third slot, becomes ugly but efficient:
+
+```csharp
+IntPtr nativeInstance = ...;
+
+// AddRef()
+int countRef = ((delegate* unmanaged<IntPtr, int>)(*(*(void***)nativeInstance + 1 /* second slot */)))(nativeInstance);
+
+// Release()
+int countRel = ((delegate* unmanaged<IntPtr, int>)(*(*(void***)nativeInstance + 2 /* third slot */)))(nativeInstance);
+```
+
+When the native instance first enters managed code the `AddRef()` should either be taken or been performed if the native instance was an out argument from an API call. The RCW/NOCW is now the "owner" and must call `Release()` when the managed object is no longer needed. Knowing when the wrapper is no longer needed is a hard problem that the GC aware cache helps solve. In the case where it is certain the wrapper no longer has any purpose the built-in COM interop provides the [`Marshal.ReleaseComObject`][api_releasecomobject] or [`Marshal.FinalReleaseComObject`][api_finalreleasecomobject]. The `ComWrappers` implementer must handle this themselves since the design of the wrapper is up to them. In most cases however, the wrapper consumer can't be certain where else the wrapper is being comsumed and must rely upon the GC aware cache to handle this case correctly.
+
+The GC aware cache provides hooks that permit safe inspection of a wrapper as it goes through its life cycle. The steps below are marked with the GC mode under which they run &ndash; see [GC, Preemptive, and Cooperative modes][doc_botr].
+
+1) [**Cooperative**] The wrapper is created and an entry is inserted into the cache that maps from `IUnknown*` to wrapper.
+1) [**GC**] The wrapper is determined to be collectable by the GC, put on the Finalizer queue, and marked "detached" from the cache.
+    * The detached state means the cache no longer has a mapping from an `IUnknown*` value to a wrapper.
+1) [**Cooperative**] The wrapper's finalizer is executed clearing any wrapper state.
+    * [**Preemptive**] The Finalizer thread switches GC modes to call the native object's `Release()`.
+1) [**GC**] The wrapper mapping is removed from the cache.
+1) [**Preemptive**] After the Finalizer thread has cleared its queue, the wrapper's runtime context memory will be freed.
+
+Enabling lazy `QueryInterface()` calls with static code is possible in .NET 5+ using the [`IDynamicInterfaceCastable`][api_idynamicinterfacecastable] interface. Without `IDynamicInterfaceCastable` support is limited to either leveraging built-in COM interop features or dynamic code-generation using [`Reflection.Emit`][doc_refemit]. The idea is to permit as late as possible the determination of what interfaces a specific native COM instance supports, ideally only when requested via some mechanism like a type cast in C#.
+
+All of the above is further complicated when thread affinitized COM objects are introduced &ndash; see [COM Apartments][doc_com_apartments]. Ensuring that RCW/NOCW instances are only used in the correct context can be done using one of two mechansims:
+
+* [`RoGetAgileReference()`][api_rogetagilereference] &ndash; Permits the creation of an "agile reference" to a native instance that can be used to access that instance from any thread.
+* [Global Interface Table (GIT)][doc_globalinterfacetable] &ndash; Prior to Windows 8, a low level API that enables access to thread affinitized native objects from different threads.
+
+**COM Callable Wrapper (CCW) / Managed Object Wrapper (MOW)**
+
+**TODO**
+
+### WinRT <a name="winrt"></a>
+
+**TODO**
+
 ## Diagnostics <a name="diagnostics"></a>
 
 The ability to observe what the runtime is doing during an interop scenario is very important. Multiple tools and Runtime onfiguration options exist to help understand the interop scenario while it is underway.
 
 **Runtime tracing**
 
-The CLR has extensive tracing probes built-in. Historically, this information is emitted via an ETW provider on Windows but has been extended to work on all platforms using [`TraceEvent`][nuget_traceevent]. The CLR emits this data is using the `Microsoft-Windows-DotNETRuntime` provider (ID: `{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}`). Specific interop details can be requested using the `InteropKeyword` (ID: `0x2000`) and documented [here](https://docs.microsoft.com/dotnet/framework/performance/interop-etw-events). The data can be collected using a number of tools but the most convenient is [PerfView][repo_perfview].
+The CLR has extensive tracing probes built-in. Historically, this information is emitted via an ETW provider on Windows but has been extended to work on all platforms using [`EventPipe`][doc_eventpipe]. The CLR emits this data is using the `Microsoft-Windows-DotNETRuntime` provider (ID: `{e13c0d23-ccbc-4e12-931b-d9cc2eee27e4}`). Specific interop details can be requested using the `InteropKeyword` (ID: `0x2000`) and documented [here](https://docs.microsoft.com/dotnet/fundamentals/diagnostics/runtime-events). The data can be collected and/or analyzed using a number of tools and libraries (for example, [`TraceEvent`][nuget_traceevent]). For a UI scenario, [PerfView][repo_perfview] is recommended or for a CLI scenario, one can use [`dotnet trace`][doc_dotnet_trace].
 
 In .NET Core 3.1/.NET 5+ the interop events contain extensive IL Stub details such as the generated IL instructions. Below is an abridged example for the `sum_ints()` P/Invoke captured and formatted using the PerfView tool. Observe the signatures in the event payload &ndash; this is useful when validating the declared P/Invoke signature expresses what is desired.
 
@@ -413,12 +551,7 @@ Only on Windows and not documented.
 - `DumpCCW` &ndash; Show details of the COM Callable Wrapper.
 - `DumpRCW` &ndash; Show details of the Runtime Callable Wrapper.
 
-
 <!--
-
-## COM and `IUnknown` <a name="comiunknown"></a>
-
-### WinRT <a name="winrt"></a>
 
 ## Migration from .NET Framework <a name="migration"></a>
 
@@ -445,15 +578,20 @@ Multiple tools exist for building interop solutions in .NET interop. Below is a 
 
 <!-- Reusable links -->
 
+[api_comwrappers]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.comwrappers
 [api_dllimportattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.dllimportattribute
 [api_exception]:https://docs.microsoft.com/dotnet/api/system.exception
+[api_releasecomobject]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.marshal.releasecomobject
+[api_finalreleasecomobject]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.marshal.finalreleasecomobject
 [api_gchandle]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.gchandle
 [api_gchandletype]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.gchandletype
 [api_iunknown]:https://docs.microsoft.com/windows/win32/api/unknwn/nn-unknwn-iunknown
+[api_idynamicinterfacecastable]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.idynamicinterfacecastable
 [api_marshalasattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.marshalasattribute
 [api_object]:https://docs.microsoft.com/dotnet/api/system.object
 [api_outattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.outattribute
 [api_preservesigattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.preservesigattribute
+[api_rogetagilereference]:https://docs.microsoft.com/windows/win32/api/combaseapi/nf-combaseapi-rogetagilereference
 [api_safehandle]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.safehandle
 [api_unmanagedfunctionpointerattr]:https://docs.microsoft.com/dotnet/api/system.runtime.interopservices.unmanagedfunctionpointerattribute
 
@@ -470,12 +608,20 @@ Multiple tools exist for building interop solutions in .NET interop. Below is a 
 [doc_blittable]:https://docs.microsoft.com/dotnet/framework/interop/blittable-and-non-blittable-types
 [doc_botr]:https://github.com/dotnet/runtime/blob/main/docs/design/coreclr/botr/README.md
 [doc_com]:https://docs.microsoft.com/windows/win32/com/the-component-object-model
+[doc_com_apartments]:https://docs.microsoft.com/windows/win32/com/processes--threads--and-apartments
 [doc_cppcli]:https://docs.microsoft.com/cpp/dotnet/dotnet-programming-with-cpp-cli-visual-cpp
+[doc_dotnet_trace]:https://docs.microsoft.com/dotnet/core/diagnostics/dotnet-trace
+[doc_eventpipe]:https://docs.microsoft.com/dotnet/core/diagnostics/eventpipe
+[doc_globalinterfacetable]:https://docs.microsoft.com/windows/win32/com/accessing-interfaces-across-apartments
+[doc_midl]:https://docs.microsoft.com/windows/win32/midl/midl-start-page
 [doc_pinning]:https://docs.microsoft.com/dotnet/framework/interop/copying-and-pinning
 [doc_pinvoke]:https://docs.microsoft.com/dotnet/standard/native-interop/pinvoke
+[doc_refemit]:https://docs.microsoft.com/dotnet/framework/reflection-and-codedom/emitting-dynamic-methods-and-assemblies
 [doc_sos]:https://docs.microsoft.com/dotnet/core/diagnostics/dotnet-sos
 [doc_unmanaged_types]:https://docs.microsoft.com/dotnet/csharp/language-reference/builtin-types/unmanaged-types
 [doc_windatatypes]:https://docs.microsoft.com/windows/win32/winprog/windows-data-types
+[doc_wrappers_builtin]:https://docs.microsoft.com/dotnet/standard/native-interop/com-wrappers
+[doc_wrappers_api_tutorial]:https://docs.microsoft.com/dotnet/standard/native-interop/tutorial-comwrappers
 
 [nuget_traceevent]:https://www.nuget.org/packages/Microsoft.Diagnostics.Tracing.TraceEvent/
 
@@ -488,6 +634,10 @@ Multiple tools exist for building interop solutions in .NET interop. Below is a 
 [repo_perfview]:https://github.com/Microsoft/perfview
 [repo_sharpgentools]:https://github.com/SharpGenTools/SharpGenTools
 
+[wiki_com]:https://en.wikipedia.org/wiki/Component_Object_Model
 [wiki_hresult]:https://wikipedia.org/wiki/HRESULT
-[wiki_x86callconv]:https://wikipedia.org/wiki/X86_calling_conventions
+[wiki_reference_counting]:https://wikipedia.org/wiki/Reference_counting
+[wiki_uuid]:https://wikipedia.org/wiki/Universally_unique_identifier
 [wiki_valuereftypes]:https://wikipedia.org/wiki/Value_type_and_reference_type
+[wiki_vtable]:https://wikipedia.org/wiki/Virtual_method_table
+[wiki_x86callconv]:https://wikipedia.org/wiki/X86_calling_conventions
