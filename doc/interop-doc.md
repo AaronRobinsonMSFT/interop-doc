@@ -16,13 +16,13 @@
     - [C++ language extensions](#cppcli_cpplangext).
     - [Activation of the .NET runtime](#cppcli_activation).
 - [COM and `IUnknown`](#comiunknown) &ndash; Working with COM and the `IUnknown` ABI.
-    - [WinRT](#winrt).
+    - [WinRT](#winrt) - **TODO**
 - [Diagnostics](#diagnostics) &ndash; Understanding what is happening.
 - [Tooling](#tooling) &ndash; Tools that can help building interop scenarios.
+- [FAQs](#faqs) &ndash; Common interop questions.
 
 <!--
 - [Migration from .NET Framework](#migration) &ndash; Options when migrating from .NET Framework.
-- [Gotchas](#gotchas) &ndash; Common interop issues.
 -->
 
 ## Introduction <a name="intro"></a>
@@ -428,10 +428,10 @@ The maintaining of lifetime semantics requires consumers to be able to call `Add
 IntPtr nativeInstance = ...;
 
 // AddRef()
-int countRef = ((delegate* unmanaged<IntPtr, int>)(*(*(void***)nativeInstance + 1 /* second slot */)))(nativeInstance);
+int currCount = ((delegate* unmanaged<IntPtr, int>)(*(*(void***)nativeInstance + 1 /* second slot */)))(nativeInstance);
 
 // Release()
-int countRel = ((delegate* unmanaged<IntPtr, int>)(*(*(void***)nativeInstance + 2 /* third slot */)))(nativeInstance);
+int currCount = ((delegate* unmanaged<IntPtr, int>)(*(*(void***)nativeInstance + 2 /* third slot */)))(nativeInstance);
 ```
 
 When the native instance first enters managed code the `AddRef()` should either be taken or been performed if the native instance was an out argument from an API call. The RCW/NOCW is now the "owner" and must call `Release()` when the managed object is no longer needed. Knowing when the wrapper is no longer needed is a hard problem that the GC aware cache helps solve. In the case where it is certain the wrapper no longer has any purpose the built-in COM interop provides the [`Marshal.ReleaseComObject`][api_releasecomobject] or [`Marshal.FinalReleaseComObject`][api_finalreleasecomobject]. The `ComWrappers` implementer must handle this themselves since the design of the wrapper is up to them. In most cases however, the wrapper consumer can't be certain where else the wrapper is being comsumed and must rely upon the GC aware cache to handle this case correctly.
@@ -455,7 +455,77 @@ All of the above is further complicated when thread affinitized COM objects are 
 
 **COM Callable Wrapper (CCW) / Managed Object Wrapper (MOW)**
 
-**TODO**
+Projecting managed implemented COM interfaces into a native environment is the purpose of the CCW/MOW. Compared to the RCW/NOCW the concerns are narrower and easier to reason about since the .NET environment is more forgiving than the native COM environment &ndash; .NET doesn't impose thread affinity on objects. There are two concerns for a CCW/MOW implementation.
+
+1) Extend the lifetime of a managed object via the COM lifetime APIs &ndash; `AddRef()`/`Release()`.
+1) Avoid unnecessary wrapper creation.
+
+Extending the lifetime of the managed object requires allocation of a small block of memory and then applying the [COM ABI](#com_interface_abi). Let's consider one example of how the memory could be laid out for an managed object exposing the `IUnknown` interface. All internal .NET COM interop solutions use a similar methodology but are optimized for process bitness and alignment within the allocated memory.
+
+```
+0x10000  <GC Handle to managed object>
+0x10008  <Reference count>
+0x1000c  <Buffer in 64-bit>
+0x10010  0x10000
+0x10018  0x20000
+...
+0x20000  <QueryInterface implementation>
+0x20008  <AddRef implementation>
+0x20010  <Release implementation>
+```
+
+Given the above memory layout we can walkthrough a native scenario calling into the managed implementation of `Release()`.
+
+```cpp
+// Get a managed implementation of IUnknown.
+IUnknown* pUnk = ...;   // pUnk = 0x10018
+
+// Access the vtable at 0x10018
+// 0x10018 -> 0x20000
+// Access the second slot
+// 0x20000[2] -> <Release implementation>
+pUnk->Release();
+```
+
+Calling the second slot, `Release()`, above enters the managed implementation in .NET 5+. Prior to .NET 5, a `Delegate` would be used instead.
+
+```csharp
+struct WrapperHeader
+{
+    public IntPtr Handle;
+    public uint RefCount;
+}
+
+[UnmanagedCallersOnly]
+static unsafe int ReleaseImpl(UIntPtr _this)
+{
+    // 0x10010 = 0x10018 & 0xffffffffffff0
+    UIntPtr wrapperPtr = (nuint)_this & ~(nuint)0xf;
+
+    // 0x10000 = *0x10010
+    WrapperHeader* header = *(WrapperHeader**)wrapperPtr;
+
+    // Decrement the reference count for the wrapper
+    uint refCount = Interlocked.Decrement(ref header->RefCount);
+    if (refCount == 0)
+    {
+        // Convert the handle pointer to a GCHandle. From the GCHandle
+        // the GCHandle.Target property could access the managed object.
+        GCHandle instanceHandle = GCHandle.FromIntPtr(header->Handle);
+
+        // Free the GCHandle so it will stop extending the managed
+        // object's lifetime.
+        instanceHandle.Free();
+        header->Handle = IntPtr.Zero;
+    }
+
+    return refCount;
+}
+```
+
+Using the built-in COM interop or `ComWrappers` API the implementation of `IUnknown` is given so the above `Release()` is uses for illustratives purposes and doesn't represent any actual implementation. The `ComWrappers` API requires consumers to provide the vtables but abstracts away the masking and pointer dispatch through helper APIs &ndash; see [`ComWrappers` tutorial][doc_wrappers_api_tutorial].
+
+Avoiding creation of multiple wrappers is possible through a global concurrent dictionary or reader/writer lock around a normal dictionary. Another option is to associate the wrapper with the managed object &ndash; the approach taken by the runtime. The runtime's association process is done in the lowest levels and makes for fast access and the lowest possible overhead. Without the built-in COM interop or `ComWrappers` API an afordance can be provided by the user if COM interop is a high priority for user types. A field for the wrapper could be defined in the managed definition and the manual COM interop could be enlightened with this knowledge.
 
 ### WinRT <a name="winrt"></a>
 
@@ -555,7 +625,6 @@ Only on Windows and not documented.
 
 ## Migration from .NET Framework <a name="migration"></a>
 
-## Gotchas <a name="gotchas"></a>
 -->
 
 ## Tooling <a name="tooling"></a>
@@ -569,6 +638,8 @@ Multiple tools exist for building interop solutions in .NET interop. Below is a 
 [DNNE][repo_dnne] &ndash; Export C functions from a managed assembly.
 
 [SharpLab](https://sharplab.io/) &ndash; Website used to view compiled C# as IL.
+
+## FAQs <a name="faqs"></a>
 
 ## Additional Resources
 
