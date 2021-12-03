@@ -325,21 +325,21 @@ Aside from the `mscoree.dll`/`ijwhost.dll` differences, there are other function
 
 ## COM and `IUnknown` <a name="comiunknown"></a>
 
-The [Component Object Model (COM)][doc_com] was first presented in 1993 and has been a integral part of the Windows platform since then. The history of .NET can't be written without COM and its influence and impact can be seen in many aspects but none as prominently as interoperability. This section is not intended to fully describe all COM concerns in .NET but will instead focus on the nuts and bolts of how COM support is built-in, how the entire COM interop system can be replaced, and some considerations when engaging with COM from .NET.
+The [Component Object Model (COM)][doc_com] was first presented in 1993 and has been a integral part of the Windows platform since then. The history of .NET can't be written without COM&mdash;its influence and impact can be seen in many aspects of .NET, but none as prominently as interoperability. This section is not intended to fully describe all COM concerns in .NET. It will instead give a basic overview of COM concepts that are important to .NET interoperability and then focus on the nuts and bolts of how COM support is built into .NET, how the entire COM interop system can be replaced, and some considerations when engaging with COM from .NET.
 
 ### `IUnknown` &ndash; the base of COM
 
-The base of all COM types is the [`IUnknown` interface][api_iunknown]. This simple interface, consisting of 3 functions, is designed to handle lifetime management and how to convert from one interface to another. 
+The base of all COM types is the [`IUnknown` interface][api_iunknown]. This simple interface, consisting of 3 functions, is designed to handle lifetime management and conversion from one interface to another. 
 
-Lifetime management is handled by a [reference counting][wiki_reference_counting] method. Reference counting provides accurate lifetime management but has two major drawbacks: circular references between instances are cumbersome and it has much higher overhead than other garbage collection techniques. The [`AddRef()`](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-addref) and [`Release()`](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-release) functions handle this lifetime management. Implementing these functions is straightforward, even in a thread safe manner. The basic rule is as follows: When the reference count reaches 0 the memory for the instance can safely be freed.
+Lifetime management is handled by a [reference counting][wiki_reference_counting] method. Reference counting provides accurate lifetime management but has two major drawbacks: circular references between instances are cumbersome and it has much higher overhead than other garbage collection techniques. The [`AddRef()`](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-addref) and [`Release()`](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-release) functions handle this lifetime management. Implementing these functions is straightforward, even in a thread-safe manner. The basic rule is: when the reference count reaches 0, the memory for the instance can safely be freed.
 
-Moving between interfaces is accomplished via the [`QueryInterface()`](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(refiid_void)) function. Conceptually, `QueryInterface()` is similar to the [C# `as` cast](https://docs.microsoft.com/dotnet/csharp/language-reference/operators/type-testing-and-cast#as-operator) &ndash; attempt to cast to a type and get the desired type or return `null`. As opposed to the lifetime management functions, properly implementing `QueryInterface()` requires some care following [specific rules](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(refiid_void)#remarks). These rules will not be enumerated here as the official documentation is clear, but they are fundamental to maintaining the integrity of lifetime management and the COM type system.
+Moving between interfaces is accomplished via the [`QueryInterface()`](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(refiid_void)) function. Conceptually, `QueryInterface()` is similar to the [C# `as` cast](https://docs.microsoft.com/dotnet/csharp/language-reference/operators/type-testing-and-cast#as-operator) &ndash; attempt to cast to a type and get the desired type or return `null`. Unlike the straightforward lifetime management functions, properly implementing `QueryInterface()` requires some care to follow [specific rules](https://docs.microsoft.com/windows/win32/api/unknwn/nf-unknwn-iunknown-queryinterface(refiid_void)#remarks). These rules will not be enumerated here as the official documentation is clear, but they are fundamental to maintaining the integrity of lifetime management and the COM type system.
 
-The last feature of the `IUnknown` interface is its name or rather ID. In COM, all types have an ID defined as a 128-bit [`UUID`][wiki_uuid], commonly called a `GUID` in COM and .NET. The `UUID`, as an ID, is used for all COM types (for example, interfaces (`IID`), coclasses (`CLSID`), records, etc). In COM, this means the name isn't actually interesting but actually the `UUID` is what is important &ndash; this will become important in .NET. Note that the `UUID`s on Windows have a [mixed endian encoding](https://wikipedia.org/wiki/Universally_unique_identifier#Encoding) that can cause confusion.
+The last feature of the `IUnknown` interface is its name or rather ID. In COM, all types have an ID defined as a 128-bit [`UUID`][wiki_uuid], commonly called a `GUID` in COM and .NET. The `UUID`, as an ID, is used for all COM types&mdash;for example, interfaces (`IID`), coclasses (`CLSID`), records, etc. In COM, this means the name isn't actually interesting and the `UUID` is what matters&mdash;this will become important in .NET. Note that the `UUID`s on Windows have a [mixed endian encoding](https://wikipedia.org/wiki/Universally_unique_identifier#Encoding) that can cause confusion.
 
 #### COM interface ABI <a name="com_interface_abi"></a>
 
-All interfaces that inherit from `IUnknown` are defined in memory in a way that permits interoperability with the C language &ndash; a goal of COM. An example will help to illustrate how all `IUnknown` interfaces are stored in memory. Imagine a COM type, `CClass`, that implements two COM interfaces (for example, `IInterface1` and `IInterface2`). The `IInterface1` and `IInterface2` interfaces each define a single function, `Work1()` and `Work2()` respectively, beyond inheriting from `IUnknown`. Through some COM function an instance of `CClass` is allocated at memory address `0x10000` and the initial interface is `IInterface1`. COM dictates that at that address the first pointer sized value points to the [virtual function table][wiki_vtable] (vtable), `0x30000` in the example. Within each vtable, the interface member functions are laid out sequentially.
+All interfaces that inherit from `IUnknown` are defined in memory in a way that permits interoperability with the C language &ndash; a goal of COM. An example will help to illustrate how all `IUnknown` interfaces are stored in memory. Imagine a COM type, `CClass`, that implements two COM interfaces, `IInterface1` and `IInterface2`. Beyond inheriting from `IUnknown`, the `IInterface1` and `IInterface2` interfaces each define a single function, `DoWork1()` and `DoWork2()` respectively. Through some COM function an instance of `CClass` is allocated at memory address `0x10000` and the initial interface is `IInterface1`. COM dictates that at that address the first pointer-sized value points to the [virtual function table][wiki_vtable] (vtable), `0x20000` in the example. Within each vtable, the interface member functions are laid out sequentially.
 
 ```
 0x10000  0x20000  <CClass::IInterface1 vtable>
@@ -359,7 +359,7 @@ All interfaces that inherit from `IUnknown` are defined in memory in a way that 
 
 ### COM interfaces and classes
 
-The COM system is represent by interfaces and classes. The interfaces define the API contract and the classes define an implementation of that contract. For example, let us define an interface for parsing a string and returning it as an integer. COM types are typically defined using the [Microsoft Interface Definition Language (MIDL)][doc_midl] and is used in the following example.
+The COM system is represented by interfaces and classes. The interfaces define the API contract and the classes define an implementation of that contract. For example, let us define an interface for parsing a string and returning it as an integer. COM types are typically defined using the [Microsoft Interface Definition Language (MIDL)][doc_midl], which we use in the following example.
 
 ```idl
 [
@@ -374,7 +374,7 @@ interface IParseNumber : IUnknown
 }
 ```
 
-The semantics of the `Parse()` function on the `IParseNumber` interface should be clear &ndash; feel free to ignore the esoteric MIDL syntax. The idea is given a string, `str`, and a pointer to an integer, `num`, parse the string and return the value to the caller via the `int*`. The [`HRESULT`][wiki_hresult] return type, a typdef'd C `unsigned long`, represents an "error code" pattern that is used throughout COM &ndash; exceptions are not permitted to cross a COM method boundary. Now that we have defined the interface API, let us examine an implementation definition.
+The semantics of the `Parse()` function on the `IParseNumber` interface should be clear&mdash;given a string, `str`, and a pointer to an integer, `num`, parse the string and return the value to the caller via the `int*`. The [`HRESULT`][wiki_hresult] return type, a typdef'd C `unsigned long`, represents an "error code" pattern that is used throughout COM &ndash; exceptions are not permitted to cross a COM method boundary. Now that we have defined the interface API, let us examine an implementation definition.
 
 ```idl
 [
@@ -397,32 +397,32 @@ library NumberParsing
 };
 ```
 
-The above defines two implementations of the `IParseNumber` interface. The first, `CParseAsDecimal`, implies that it will parse the supplied string as a decimal value and the second, `CParseAsHexadecimal`, implies parsing as a hexadecimal value. The salient point in the implementation snippet is that each `coclass`, read "COM class", has its own `UUID`. One could then imagine, based on the previous discussion of `UUID`, that in order to instantiate a specific implementation the associated `UUID` should be passed to some function and the desired implementation would be returned. How one implements a COM class or registers it for activation is beyond the scope of this document. The key take away here is an interface defines an API and a class provides an implementation of that API.
+The above defines two implementations of the `IParseNumber` interface. The first, `CParseAsDecimal`, implies that it will parse the supplied string as a decimal value and the second, `CParseAsHexadecimal`, implies parsing as a hexadecimal value. The salient point in the implementation snippet is that each `coclass`, read "COM class", has its own `UUID`. One could then imagine, based on the previous discussion of `UUID`, that in order to instantiate a specific implementation, the associated `UUID` should be passed to some function and the desired implementation would be returned. How one implements a COM class or registers it for activation is beyond the scope of this document. The key take-away here is an interface defines an API and a class provides an implementation of that API.
 
 ### Additional COM features <a name="additional_com_features" />
 
 This list represents some of the more impactful features of COM as it relates to interoperability with .NET.
 
-- [Apartments][doc_com_apartments] &ndash; Organizational structure for threading in COM.
-- [Security](https://docs.microsoft.com/windows/win32/com/security-in-com) &ndash; COM provides a rich security model for class activation and proxied permission.
-- Remote Procedural Calls (RPC) &ndash; COM can perform RPC with another process locally or across a network.
+- [Apartments][doc_com_apartments]: Organizational structure for threading in COM.
+- [Security](https://docs.microsoft.com/windows/win32/com/security-in-com): COM provides a rich security model for class activation and proxied permission.
+- Remote Procedural Calls (RPC): COM can perform RPC with another process locally or across a network.
 
 ### COM and .NET
 
-Interoperability between COM and .NET has existed since the beginning of the runtime and always been a first-class scenario. A conceptual overview of the wrappers and how the built-in system works can be found [here][doc_wrappers_builtin]. The below provides some of the low-level details about COM and COM interop that could enable someone to create their own COM interop solution. For .NET 5+ an alternative to the built-in COM interop system is available through the [`ComWrappers` API][api_comwrappers] &ndash; a [`ComWrappers` tutorial][doc_wrappers_api_tutorial] provides some of the following content.
+Interoperability between COM and .NET has existed since the beginning of the runtime and always been a first-class scenario. A conceptual overview of the wrappers and how the built-in system works can be found [here][doc_wrappers_builtin]. The below provides some of the low-level details about COM and COM interop that could enable someone to create their own COM interop solution. For .NET 5 and later versions, an alternative to the built-in COM interop system is available through the [`ComWrappers` API][api_comwrappers] &ndash; a [`ComWrappers` tutorial][doc_wrappers_api_tutorial] provides some of the following content.
 
 With the introduction of the `ComWrappers` API in .NET 5, terminology for COM interop needed to be slightly revised to help disambiguate between built-in COM interop wrappers and wrappers provided by a `ComWrappers` sub-class. The Runtime Callable Wrapper (RCW) and COM Callable Wrapper (CCW) are terms used to describe wrappers with the built-in COM interop, whereas Native Object Callable Wrapper (NOCW) and Managed Object Wrapper (MOW) are used for wrappers created by a `ComWrappers` sub-class. It is still common to refer to a NOCW as an RCW or MOW as a CCW if there is no ambiguity in the current context with built-in COM interop wrappers.
 
 **Runtime Callable Wrapper (RCW) / Native Object Callable Wrapper (NOCW)**
 
-Wrappers for native `IUnknown` instances are designed to project a managed API surface for a native implementation of a COM interface. This is similar to how a P/Invoke is designed to project a C-style function in managed code using `DllImport`. There are two primary functional concerns for an RCW/NOCW implementation.
+The RCW/NOCW is designed to wrap native `IUnknown` instances and project a native implementation of a COM interface to a managed API surface. This is similar to how a P/Invoke is designed to project a C-style function in managed code using `DllImport`. There are two primary functional concerns for an RCW/NOCW implementation.
 
-1) Maintain correct lifetime semantics for the instance &ndash; `AddRef()`/`Release()`.
+1) Maintain correct lifetime semantics for the instance via the COM lifetime APIs `AddRef()` and `Release()`.
 1) Limit costly `QueryInterface()` calls to detect "is supported" during wrapper creation. The "is supported" question should be "pay for play" since it is not possible to `QueryInterface()` for every possible COM interface.
 
-A functionally optional, but performance critical, secondary concern is avoiding the allocation of multiple managed wrappers for the same native instance. This implies a mapping between native instance and managed wrapper, which means a caching mechanism that is also GC aware which has much broader implications. Normal COM objects have thread affinity that requires all functions call to be performed on a specific group of threads or sometimes even a specific thread &ndash; see [COM Apartments][doc_com_apartments]. Requiring operations to be executed on specific threads pushes behavioral requirements onto the GC, which typically is unaware of any interop scenario. The runtime must provide a mechanism in order to efficiently solve this caching issue.
+A functionally optional, but performance critical, secondary concern is avoiding the allocation of multiple managed wrappers for the same native instance. This implies a mapping between native instance and managed wrapper and thus a caching mechanism that is GC-aware, which has broad implications. Normal COM objects have thread affinity that requires all function calls to be performed on a specific group of threads or sometimes even a specific thread&mdash;see [COM Apartments][doc_com_apartments]. Requiring operations to be executed on specific threads pushes behavioral requirements onto the GC, which typically is unaware of any interop scenario. The runtime must provide a mechanism to efficiently solve this caching issue.
 
-The maintaining of lifetime semantics requires consumers to be able to call `AddRef()` or `Release()` at the correct time. This requires being able to dispatch calls on a native instance. If we understand the [COM interface ABI](#com_interface_abi), using C# function pointers makes this straight forward. Given a native instance as a `void*` or `IntPtr` in C#, then dispatching to the `AddRef()`, second slot, or `Release()`, third slot, becomes ugly but efficient:
+To maintain lifetime semantics, consumers must be able to call `AddRef()` or `Release()` at the correct time. This requires being able to dispatch calls on a native instance. If we understand the [COM interface ABI](#com_interface_abi), using C# function pointers makes this straightforward. Given a native instance as a `void*` or `IntPtr` in C#, dispatching to `AddRef()` (second slot), or `Release()` (third slot) is ugly but efficient:
 
 ```csharp
 IntPtr nativeInstance = ...;
@@ -434,33 +434,33 @@ int currCount = ((delegate* unmanaged<IntPtr, int>)(*(*(void***)nativeInstance +
 int currCount = ((delegate* unmanaged<IntPtr, int>)(*(*(void***)nativeInstance + 2 /* third slot */)))(nativeInstance);
 ```
 
-When the native instance first enters managed code the `AddRef()` should either be taken or been performed if the native instance was an out argument from an API call. The RCW/NOCW is now the "owner" and must call `Release()` when the managed object is no longer needed. Knowing when the wrapper is no longer needed is a hard problem that the GC aware cache helps solve. In the case where it is certain the wrapper no longer has any purpose, the built-in COM interop provides the [`Marshal.ReleaseComObject`][api_releasecomobject] or [`Marshal.FinalReleaseComObject`][api_finalreleasecomobject]. The `ComWrappers` implementer must handle this themselves since the design of the wrapper is up to them. In most cases however, the wrapper consumer can't be certain where else the wrapper is being consumed and must rely upon the GC aware cache to handle this case correctly.
+When the native instance first enters managed code, the `AddRef()` should either be taken or been performed if the native instance was an out argument from an API call. The RCW/NOCW is now the "owner" and must call `Release()` when the managed object is no longer needed. Knowing when the wrapper is no longer needed is a hard problem that the GC-aware cache helps solve. With the built-in COM interop, in the case where it is certain the wrapper no longer has any purpose, the system provides the [`Marshal.ReleaseComObject`][api_releasecomobject] or [`Marshal.FinalReleaseComObject`][api_finalreleasecomobject] API. With `ComWrappers`, the `ComWrappers` implementer must handle this themselves since the design of the wrapper is up to them. In most cases however, the wrapper consumer can't be certain where else the wrapper is being consumed and must rely upon the GC-aware cache to handle this case correctly.
 
-The GC aware cache provides hooks that permit safe inspection of a wrapper as it goes through its life cycle. The steps below are marked with the GC mode under which they run &ndash; see [GC, Preemptive, and Cooperative modes][doc_botr].
+The GC-aware cache provides hooks that permit safe inspection of a wrapper in the runtime as it goes through its life cycle. The steps below are marked with the GC mode under which they run&mdash;see [GC, Preemptive, and Cooperative modes][doc_botr].
 
 1) [**Cooperative**] The wrapper is created and an entry is inserted into the cache that maps from `IUnknown*` to wrapper.
-1) [**GC**] The wrapper is determined to be collectable by the GC, put on the Finalizer queue, and marked "detached" from the cache.
+1) [**GC**] The wrapper is determined to be collectible by the GC, put on the Finalizer queue, and marked "detached" from the cache.
     * The detached state means the cache no longer has a mapping from an `IUnknown*` value to a wrapper.
 1) [**Cooperative**] The wrapper's finalizer is executed clearing any wrapper state.
     * [**Preemptive**] The Finalizer thread switches GC modes to call the native object's `Release()`.
 1) [**GC**] The wrapper mapping is removed from the cache.
 1) [**Preemptive**] After the Finalizer thread has cleared its queue, the wrapper's runtime context memory will be freed.
 
-Enabling lazy `QueryInterface()` calls with static code is possible in .NET 5+ using the [`IDynamicInterfaceCastable`][api_idynamicinterfacecastable] interface. Without `IDynamicInterfaceCastable`, support is limited to either leveraging built-in COM interop features or dynamic code-generation using [`Reflection.Emit`][doc_refemit]. The idea is to permit as late as possible the determination of what interfaces a specific native COM instance supports, ideally only when requested via some mechanism like a type cast in C#.
+Enabling lazy `QueryInterface()` calls with static code is possible in .NET 5 and later versions using the [`IDynamicInterfaceCastable`][api_idynamicinterfacecastable] interface. Without `IDynamicInterfaceCastable`, support is limited to either leveraging built-in COM interop features or dynamic code-generation using [`Reflection.Emit`][doc_refemit]. The idea is to permit the determination of what interfaces a specific native COM instance supports to occur as late as possible, ideally only when requested via some mechanism like a type cast in C#.
 
-All of the above is further complicated when thread affinitized COM objects are introduced &ndash; see [COM Apartments][doc_com_apartments]. Ensuring that RCW/NOCW instances are only used in the correct context can be done using one of two mechansims:
+All of the above is further complicated when thread affinitized COM objects are introduced&mdash;see [COM Apartments][doc_com_apartments]. Ensuring that RCW/NOCW instances are only used in the correct context can be done using one of two mechansims:
 
-* [`RoGetAgileReference()`][api_rogetagilereference] &ndash; Permits the creation of an "agile reference" to a native instance that can be used to access that instance from any thread.
-* [Global Interface Table (GIT)][doc_globalinterfacetable] &ndash; Prior to Windows 8, a low level API that enables access to thread affinitized native objects from different threads.
+* [`RoGetAgileReference()`][api_rogetagilereference]: Permits the creation of an "agile reference" to a native instance that can be used to access that instance from any thread.
+* [Global Interface Table (GIT)][doc_globalinterfacetable]: Prior to Windows 8, a low level API that enables access to thread affinitized native objects from different threads.
 
 **COM Callable Wrapper (CCW) / Managed Object Wrapper (MOW)**
 
-Projecting managed implemented COM interfaces into a native environment is the purpose of the CCW/MOW. Compared to the RCW/NOCW the concerns are narrower and easier to reason about since the .NET environment is more forgiving than the native COM environment &ndash; .NET doesn't impose thread affinity on objects. There are two concerns for a CCW/MOW implementation.
+The CCW/MOW is designed to project COM interfaces that are implemented in managed into a native environment. Compared to the RCW/NOCW, the concerns are narrower and easier to reason about since the .NET environment is more forgiving than the native COM environment&mdash;.NET doesn't impose thread affinity on objects. There are two concerns for a CCW/MOW implementation:
 
-1) Extend the lifetime of a managed object via the COM lifetime APIs &ndash; `AddRef()`/`Release()`.
+1) Extend the lifetime of a managed object via the COM lifetime APIs `AddRef()` and `Release()`.
 1) Avoid unnecessary wrapper creation.
 
-Extending the lifetime of the managed object requires allocation of a small block of memory and then applying the [COM ABI](#com_interface_abi). Let's consider one example of how the memory could be laid out for an managed object exposing the `IUnknown` interface. All internal .NET COM interop solutions use a similar methodology but are optimized for process bitness and alignment within the allocated memory.
+Extending the lifetime of the managed object requires allocating of a small block of memory and then applying knowledge of the [COM ABI](#com_interface_abi) to invoke the appropriate function. Let's consider one example of how the memory could be laid out for a managed object exposing the `IUnknown` interface. All internal .NET COM interop solutions use a similar methodology, but are optimized for process bitness and alignment within the allocated memory.
 
 ```
 0x10000  <GC Handle to managed object>
@@ -482,12 +482,12 @@ IUnknown* pUnk = ...;   // pUnk = 0x10018
 
 // Access the vtable at 0x10018
 // 0x10018 -> 0x20000
-// Access the second slot
+// Access the third slot
 // 0x20000[2] -> <Release implementation>
 pUnk->Release();
 ```
 
-Calling the second slot, `Release()`, above enters the managed implementation in .NET 5+. Prior to .NET 5, a `Delegate` would be used instead.
+Calling the third slot, `Release()`, above enters the managed implementation in .NET 5 and later versions. Prior to .NET 5, a `Delegate` would be used instead.
 
 ```csharp
 struct WrapperHeader
@@ -509,8 +509,9 @@ static unsafe int ReleaseImpl(UIntPtr _this)
     uint refCount = Interlocked.Decrement(ref header->RefCount);
     if (refCount == 0)
     {
-        // Convert the handle pointer to a GCHandle. From the GCHandle
-        // the GCHandle.Target property could access the managed object.
+        // Convert the handle pointer to a GCHandle.
+        // From the GCHandle, the GCHandle.Target property could be used
+        // to access the managed object.
         GCHandle instanceHandle = GCHandle.FromIntPtr(header->Handle);
 
         // Free the GCHandle so it will stop extending the managed
@@ -523,9 +524,9 @@ static unsafe int ReleaseImpl(UIntPtr _this)
 }
 ```
 
-Using the built-in COM interop or `ComWrappers` API the implementation of `IUnknown` is provided by the runtime; The above `Release()` is used for illustrative purposes and doesn't represent any actual implementation. The `ComWrappers` API requires consumers to provide the vtables but abstracts away the masking and pointer dispatch through helper APIs &ndash; see [`ComWrappers` tutorial][doc_wrappers_api_tutorial].
+Using the built-in COM interop or `ComWrappers` API, the implementation of `IUnknown` is provided by the runtime; the above `ReleaseImpl()` is used for illustrative purposes and doesn't represent any actual implementation. The `ComWrappers` API requires implementers to provide the vtables but abstracts away the masking and pointer dispatch through helper APIs&mdash;see [`ComWrappers` tutorial][doc_wrappers_api_tutorial].
 
-Avoiding creation of multiple wrappers is possible through a global concurrent dictionary, reader/writer lock around a normal dictionary, or another mechanism such as a `ConditionalWeakTable` depending on the desired lifetime semantics and performance requirements. Another option is to associate the wrapper with the managed object &ndash; the approach taken by the runtime. The runtime's association process is done in the lowest levels and makes for fast access and the lowest possible overhead. Without the built-in COM interop or `ComWrappers` API an afordance can be provided by the user if COM interop is a high priority for user types. A field for the wrapper could be defined in the managed definition and the manual COM interop could be enlightened with this knowledge.
+Avoiding creation of multiple wrappers is possible through a global concurrent dictionary, reader/writer lock around a normal dictionary, or another mechanism such as a `ConditionalWeakTable`; the choice would depend on the desired lifetime semantics and performance requirements. Another option is to associate the wrapper with the managed object&mdash;the approach taken by the runtime. The runtime's association process is done in the lowest levels and makes for fast access and the lowest possible overhead. Without the built-in COM interop or `ComWrappers` API an affordance can be provided by the user if COM interop is a high priority for user types. A field for the wrapper could be defined in the managed definition and the manual COM interop could be enlightened with this knowledge.
 
 ### WinRT <a name="winrt"></a>
 
